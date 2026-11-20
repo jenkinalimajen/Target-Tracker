@@ -14,6 +14,7 @@ import {
   collection,
   onSnapshot,
   doc,
+  getDocFromServer,
   setDoc,
   updateDoc,
   serverTimestamp,
@@ -48,6 +49,7 @@ import {
   getUpcomingFridayDeadline,
   computeUpdatedHistorySummary,
   isOwnerAdminEmail,
+  isAllowedDomainEmail,
 } from './types';
 import { seedAcademicCohortData } from './seedData';
 import { StaffDashboard } from './components/StaffDashboard';
@@ -64,6 +66,8 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
   const [isSigningIn, setIsSigningIn] = useState(false);
+  const [isCheckingAccess, setIsCheckingAccess] = useState(false);
+  const [isAccessAuthorized, setIsAccessAuthorized] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
 
   // Direct link (?staff=email#staff=email) from the URL
@@ -110,9 +114,9 @@ export default function App() {
     };
   }, []);
 
-  // Keep terms_config locked/archived state synced persistently once signed in
+  // Keep terms_config locked/archived state synced persistently once authorized
   useEffect(() => {
-    if (!isAuthReady || !currentUser) return;
+    if (!isAuthReady || !currentUser || !isAccessAuthorized) return;
 
     const unsubTerms = onSnapshot(
       doc(db, 'settings', 'terms_config'),
@@ -189,12 +193,13 @@ export default function App() {
       unsubTerms();
       unsubShare();
     };
-  }, [isAuthReady, currentUser]);
+  }, [isAuthReady, currentUser, isAccessAuthorized]);
 
   const hasAutoSeededRef = useRef(false);
   const hasBackfilledNotificationsRef = useRef(false);
   const hasBackfilledHistoryRef = useRef(false);
   const autoRegisteredEmailsRef = useRef<Set<string>>(new Set());
+  const syncedAllowedEmailsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
@@ -280,11 +285,95 @@ export default function App() {
     }
   }, [currentUser, isOwnerUser, configuredPublicUrl]);
 
+  // Enforce Google Sign-In restriction: only @gemswis.com accounts or emails manually added by the administrator
+  useEffect(() => {
+    if (!isAuthReady) {
+      return;
+    }
+    if (!currentUser || !userEmail) {
+      setIsCheckingAccess(false);
+      setIsAccessAuthorized(false);
+      return;
+    }
+    if (!currentUser.emailVerified) {
+      setIsCheckingAccess(false);
+      setIsAccessAuthorized(false);
+      setAuthError('A verified Google account email is required to sign in.');
+      signOut(auth).catch(() => {});
+      return;
+    }
+    if (isOwnerAdminEmail(userEmail) || isAllowedDomainEmail(userEmail)) {
+      setIsAccessAuthorized(true);
+      setIsCheckingAccess(false);
+      setAuthError(null);
+      return;
+    }
+
+    let isCancelled = false;
+    let unsubRevoke: (() => void) | null = null;
+    setIsCheckingAccess(true);
+    setIsAccessAuthorized(false);
+
+    const allowedDocRef = doc(db, 'allowed_emails', userEmail);
+    const adminDocRef = doc(db, 'admin_emails', userEmail);
+
+    (async () => {
+      try {
+        const [allowedSnap, adminSnap] = await Promise.all([
+          getDocFromServer(allowedDocRef).catch(() => null),
+          getDocFromServer(adminDocRef).catch(() => null),
+        ]);
+        if (isCancelled) return;
+
+        if (allowedSnap?.exists() || adminSnap?.exists()) {
+          setIsAccessAuthorized(true);
+          setIsCheckingAccess(false);
+          setAuthError(null);
+
+          if (allowedSnap?.exists()) {
+            unsubRevoke = onSnapshot(allowedDocRef, (liveSnap) => {
+              if (isCancelled) return;
+              if (!liveSnap.metadata.fromCache && !liveSnap.exists()) {
+                setIsAccessAuthorized(false);
+                setAuthError(
+                  `Access for "${userEmail}" was removed by the administrator.`
+                );
+                signOut(auth).catch(() => {});
+              }
+            });
+          }
+          return;
+        }
+      } catch {
+        // Fall through to access denial
+      }
+
+      if (isCancelled) return;
+      setIsAccessAuthorized(false);
+      setIsCheckingAccess(false);
+      setAuthError(
+        `Access restricted. "${userEmail}" is not a @gemswis.com account and has not been added by the administrator.`
+      );
+      signOut(auth).catch(() => {});
+    })();
+
+    return () => {
+      isCancelled = true;
+      if (unsubRevoke) unsubRevoke();
+    };
+  }, [isAuthReady, currentUser, userEmail]);
+
   const showAdminDashboard = Boolean(
-    currentUser && isOwnerUser && !effectiveAdminPreviewEmail
+    currentUser && isAccessAuthorized && isOwnerUser && !effectiveAdminPreviewEmail
   );
 
-  const hasActiveSession = Boolean(currentUser && userEmail);
+  const hasActiveSession = Boolean(
+    isAuthReady &&
+      currentUser &&
+      userEmail &&
+      currentUser.emailVerified &&
+      isAccessAuthorized
+  );
 
   useEffect(() => {
     if (!isAuthReady) {
@@ -297,6 +386,7 @@ export default function App() {
       setTargets([]);
       setNotifications([]);
       autoRegisteredEmailsRef.current.clear();
+      syncedAllowedEmailsRef.current.clear();
       return;
     }
 
@@ -328,7 +418,11 @@ export default function App() {
           );
           const isPrimaryAdmin = isOwnerAdminEmail(userEmail);
 
-          if (!myRecord && !autoRegisteredEmailsRef.current.has(userEmail)) {
+          if (
+            !myRecord &&
+            !autoRegisteredEmailsRef.current.has(userEmail) &&
+            (isPrimaryAdmin || isAllowedDomainEmail(userEmail))
+          ) {
             autoRegisteredEmailsRef.current.add(userEmail);
             const assignedRole: UserRole = isPrimaryAdmin ? 'ADMIN' : 'STAFF';
             const docId = isPrimaryAdmin
@@ -380,6 +474,25 @@ export default function App() {
               inviteStatus: item.inviteStatus || 'ACTIVE',
               updatedAt: serverTimestamp(),
             }).catch(() => {});
+          }
+
+          if (isOwnerUser && !snapshot.metadata.fromCache && currentUser.emailVerified) {
+            const cleanItemEmail = (item.email || '').trim().toLowerCase();
+            const syncKey = `${item.id}::${cleanItemEmail}`;
+            if (
+              cleanItemEmail.includes('@') &&
+              cleanItemEmail !== 'none@pending.local' &&
+              !syncedAllowedEmailsRef.current.has(syncKey)
+            ) {
+              syncedAllowedEmailsRef.current.add(syncKey);
+              setDoc(doc(db, 'allowed_emails', cleanItemEmail), {
+                email: cleanItemEmail,
+                addedByUid: uid,
+                updatedAt: serverTimestamp(),
+              }).catch(() => {
+                syncedAllowedEmailsRef.current.delete(syncKey);
+              });
+            }
           }
         }
       },
@@ -679,7 +792,7 @@ export default function App() {
             </span>
           </div>
 
-          {currentUser && isOwnerUser && (
+          {hasActiveSession && isOwnerUser && (
             <div className="flex flex-wrap items-center gap-3">
               {/* High-Visibility Portal Switcher Tabs */}
               <div className="inline-flex items-center gap-1.5 p-1 rounded-xl border border-slate-300 bg-slate-100 shadow-xs">
@@ -743,7 +856,7 @@ export default function App() {
             </div>
           )}
 
-          {currentUser && !isOwnerUser ? (
+          {hasActiveSession && !isOwnerUser ? (
             <div className="hidden sm:flex items-center gap-2.5 text-xs text-slate-500">
               <span>Staff Dashboard</span>
               <span aria-hidden="true">·</span>
@@ -752,7 +865,7 @@ export default function App() {
           ) : null}
 
           <div className="flex items-center gap-2.5 shrink-0">
-            {currentUser && isOwnerUser && effectiveAdminPreviewEmail && (
+            {hasActiveSession && isOwnerUser && effectiveAdminPreviewEmail && (
               <button
                 type="button"
                 onClick={handleExitAdminStaffPreview}
@@ -763,7 +876,7 @@ export default function App() {
               </button>
             )}
 
-            {currentUser ? (
+            {hasActiveSession ? (
               <button
                 type="button"
                 onClick={() => signOut(auth)}
@@ -777,9 +890,11 @@ export default function App() {
 
         {/* Main Content */}
         <main className="flex-1 max-w-5xl w-full mx-auto px-6 py-8">
-          {!isAuthReady ? (
+          {!isAuthReady || isCheckingAccess ? (
             <div className="text-center py-12 text-xs text-slate-500">
-              Checking browser login session...
+              {isCheckingAccess
+                ? 'Verifying account authorization...'
+                : 'Checking browser login session...'}
             </div>
           ) : !hasActiveSession ? (
             <div className="max-w-md mx-auto bg-white border border-slate-200 rounded-lg p-6 mt-10 space-y-5 shadow-xs">
@@ -788,7 +903,7 @@ export default function App() {
                   TargetTrack Sign-In
                 </h1>
                 <p className="text-xs text-slate-500">
-                  Sign in with your Google account to access your dashboard.
+                  Sign in with your <span className="font-semibold text-slate-700">@gemswis.com</span> Google account or an email added by the administrator.
                 </p>
               </div>
 

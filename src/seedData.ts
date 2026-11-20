@@ -100,6 +100,14 @@ export async function seedAcademicCohortData(
           updatedAt: serverTimestamp(),
         });
       }
+      const cleanSeedEmail = staff.email.trim().toLowerCase();
+      if (cleanSeedEmail.includes('@')) {
+        await setDoc(doc(db, 'allowed_emails', cleanSeedEmail), {
+          email: cleanSeedEmail,
+          addedByUid: staff.adminUid,
+          updatedAt: serverTimestamp(),
+        });
+      }
     } catch (error) {
       handleFirestoreError(error, OperationType.CREATE, path);
     }

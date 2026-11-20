@@ -465,16 +465,47 @@
         }
       },
       "required": ["email", "grantedByUid", "updatedAt"]
+    },
+    "AllowedEmailGrant": {
+      "title": "AllowedEmailGrant",
+      "description": "Email allowlist record written by an Admin when manually adding an authorized user.",
+      "type": "object",
+      "properties": {
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "Lowercased Google email address permitted to sign in.",
+          "minLength": 3,
+          "maxLength": 120
+        },
+        "addedByUid": {
+          "type": "string",
+          "description": "UID of the administrator who added this user.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when updated."
+        }
+      },
+      "required": ["email", "addedByUid", "updatedAt"]
     }
   },
   "firestore": {
     "/staff/{staffId}": {
       "schema": { "$ref": "#/entities/StaffMember" },
-      "description": "Stores users (auto-registered as STAFF on Google sign-in or invited by Admin) and their assigned role (STAFF or ADMIN)."
+      "description": "Stores users (auto-registered as STAFF on @gemswis.com Google sign-in or invited by Admin) and their assigned role (STAFF or ADMIN)."
     },
     "/admin_emails/{emailId}": {
       "schema": { "$ref": "#/entities/AdminEmailGrant" },
       "description": "Lookup records for manually promoted administrators."
+    },
+    "/allowed_emails/{emailId}": {
+      "schema": { "$ref": "#/entities/AllowedEmailGrant" },
+      "description": "Allowlist lookup records for emails manually added by an administrator."
     },
     "/students/{studentId}": {
       "schema": { "$ref": "#/entities/Student" },

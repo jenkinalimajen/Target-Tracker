@@ -2422,6 +2422,11 @@ export const AdminOversight: React.FC<AdminOversightProps> = ({
             updatedAt: serverTimestamp(),
           });
         }
+        await setDoc(doc(db, 'allowed_emails', cleanDirectEmail), {
+          email: cleanDirectEmail,
+          addedByUid: auth.currentUser?.uid || adminUid,
+          updatedAt: serverTimestamp(),
+        });
       } else {
         const chosenEmail = (
           selectedStaffEmail ||
@@ -2827,15 +2832,36 @@ export const AdminOversight: React.FC<AdminOversightProps> = ({
       ? 'ADMIN'
       : inviteRole;
 
+    const existingStaffRecord = staffList.find(
+      (s) => s.email.trim().toLowerCase() === cleanEmail
+    );
+
     try {
-      await setDoc(doc(db, 'staff', staffId), {
-        adminUid,
-        name: cleanName,
+      if (existingStaffRecord) {
+        await updateDoc(doc(db, 'staff', existingStaffRecord.id), {
+          name: cleanName,
+          email: cleanEmail,
+          department: cleanDept,
+          role: resolvedRole,
+          inviteStatus: existingStaffRecord.inviteStatus || 'INVITED',
+          updatedAt: serverTimestamp(),
+        });
+      } else {
+        await setDoc(doc(db, 'staff', staffId), {
+          adminUid,
+          name: cleanName,
+          email: cleanEmail,
+          department: cleanDept,
+          role: resolvedRole,
+          inviteStatus: 'INVITED',
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      }
+
+      await setDoc(doc(db, 'allowed_emails', cleanEmail), {
         email: cleanEmail,
-        department: cleanDept,
-        role: resolvedRole,
-        inviteStatus: 'INVITED',
-        createdAt: serverTimestamp(),
+        addedByUid: auth.currentUser?.uid || adminUid,
         updatedAt: serverTimestamp(),
       });
 
@@ -2845,6 +2871,8 @@ export const AdminOversight: React.FC<AdminOversightProps> = ({
           grantedByUid: auth.currentUser?.uid || adminUid,
           updatedAt: serverTimestamp(),
         });
+      } else if (existingStaffRecord) {
+        await deleteDoc(doc(db, 'admin_emails', cleanEmail)).catch(() => {});
       }
 
       await setDoc(doc(db, 'notifications', notifId), {
@@ -3047,7 +3075,19 @@ export const AdminOversight: React.FC<AdminOversightProps> = ({
       }
 
       await deleteDoc(doc(db, 'staff', targetStaff.id));
-      await deleteDoc(doc(db, 'admin_emails', staffEmailLower)).catch(() => {});
+      const hasRemainingRecord = staffList.some(
+        (s) =>
+          s.id !== targetStaff.id &&
+          s.email.trim().toLowerCase() === staffEmailLower
+      );
+      if (!hasRemainingRecord && !isOwnerAdminEmail(staffEmailLower)) {
+        await deleteDoc(doc(db, 'admin_emails', staffEmailLower)).catch(
+          () => {}
+        );
+        await deleteDoc(doc(db, 'allowed_emails', staffEmailLower)).catch(
+          () => {}
+        );
+      }
       setPendingDeleteStaff(null);
       notify(`Deleted ${targetStaff.name}.`);
     } catch (error) {

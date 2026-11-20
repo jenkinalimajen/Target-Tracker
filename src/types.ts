@@ -13,11 +13,20 @@ export type NotificationType =
   | 'ADMIN_REMINDER';
 
 export const OWNER_ADMIN_EMAILS = ['j.alimajen_wis@gemswis.com'];
+export const ALLOWED_GOOGLE_DOMAIN = 'gemswis.com';
 
 export function isOwnerAdminEmail(email?: string | null): boolean {
   if (!email) return false;
   const normalized = email.trim().toLowerCase();
   return normalized === 'j.alimajen_wis@gemswis.com';
+}
+
+export function isAllowedDomainEmail(email?: string | null): boolean {
+  if (!email) return false;
+  const normalized = email.trim().toLowerCase();
+  const atIndex = normalized.lastIndexOf('@');
+  if (atIndex <= 0) return false;
+  return normalized.slice(atIndex + 1) === ALLOWED_GOOGLE_DOMAIN;
 }
 
 export interface StaffMember {

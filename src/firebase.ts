@@ -40,11 +40,13 @@ export const googleProvider = new GoogleAuthProvider();
 
 export function createGoogleProviderWithHint(loginHintEmail?: string): GoogleAuthProvider {
   const provider = new GoogleAuthProvider();
+  const params: Record<string, string> = {
+    prompt: 'select_account',
+  };
   if (loginHintEmail && loginHintEmail.includes('@')) {
-    provider.setCustomParameters({
-      login_hint: loginHintEmail.trim().toLowerCase(),
-    });
+    params.login_hint = loginHintEmail.trim().toLowerCase();
   }
+  provider.setCustomParameters(params);
   return provider;
 }
 

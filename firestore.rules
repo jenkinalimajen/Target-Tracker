@@ -31,12 +31,40 @@ service cloud.firestore {
       return isSignedIn() && request.auth.token.email_verified == true;
     }
 
+    function isAllowedDomainEmail() {
+      return isVerified() &&
+        ('email' in request.auth.token) &&
+        request.auth.token.email is string &&
+        request.auth.token.email.size() >= 12 &&
+        request.auth.token.email.size() <= 120 &&
+        request.auth.token.email.matches('^[^/]+@[gG][eE][mM][sS][wW][iI][sS]\\.[cC][oO][mM]$');
+    }
+
     function isAdmin() {
       return isVerified() && (
         exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
-        request.auth.token.email == 'j.alimajen_wis@gemswis.com' ||
-        ('email' in request.auth.token &&
-          exists(/databases/$(database)/documents/admin_emails/$(request.auth.token.email)))
+        (
+          'email' in request.auth.token &&
+          request.auth.token.email is string && (
+            request.auth.token.email.lower() == 'j.alimajen_wis@gemswis.com' ||
+            exists(/databases/$(database)/documents/admin_emails/$(request.auth.token.email.lower())) ||
+            exists(/databases/$(database)/documents/admin_emails/$(request.auth.token.email))
+          )
+        )
+      );
+    }
+
+    function isAllowedAccess() {
+      return isVerified() && (
+        isAdmin() ||
+        isAllowedDomainEmail() ||
+        (
+          'email' in request.auth.token &&
+          request.auth.token.email is string && (
+            exists(/databases/$(database)/documents/allowed_emails/$(request.auth.token.email.lower())) ||
+            exists(/databases/$(database)/documents/allowed_emails/$(request.auth.token.email))
+          )
+        )
       );
     }
 
@@ -67,6 +95,16 @@ service cloud.firestore {
         data.email == emailId &&
         isValidId(data.grantedByUid) &&
         data.grantedByUid == request.auth.uid &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidAllowedEmailGrant(data, emailId) {
+      return data.keys().hasAll(['email', 'addedByUid', 'updatedAt']) &&
+        data.keys().hasOnly(['email', 'addedByUid', 'updatedAt']) &&
+        data.email is string && data.email.size() >= 3 && data.email.size() <= 120 &&
+        data.email == emailId &&
+        isValidId(data.addedByUid) &&
+        data.addedByUid == request.auth.uid &&
         data.updatedAt is timestamp;
     }
 
@@ -169,7 +207,11 @@ service cloud.firestore {
     }
 
     match /admin_emails/{emailId} {
-      allow get: if isVerified() && isValidEmailDocId(emailId) && (request.auth.token.email == emailId || isAdmin());
+      allow get: if isVerified() && isValidEmailDocId(emailId) && (
+        request.auth.token.email == emailId ||
+        request.auth.token.email.lower() == emailId ||
+        isAdmin()
+      );
       allow list: if isAdmin();
       allow create, update: if isAdmin() && isValidEmailDocId(emailId) &&
         isValidAdminEmailGrant(incoming(), emailId) &&
@@ -177,22 +219,36 @@ service cloud.firestore {
       allow delete: if isAdmin() && isValidEmailDocId(emailId);
     }
 
+    match /allowed_emails/{emailId} {
+      allow get: if isVerified() && isValidEmailDocId(emailId) && (
+        request.auth.token.email == emailId ||
+        request.auth.token.email.lower() == emailId ||
+        isAdmin()
+      );
+      allow list: if isAdmin();
+      allow create, update: if isAdmin() && isValidEmailDocId(emailId) &&
+        isValidAllowedEmailGrant(incoming(), emailId) &&
+        incoming().updatedAt == request.time;
+      allow delete: if isAdmin() && isValidEmailDocId(emailId);
+    }
+
     match /staff/{staffId} {
-      allow get: if isVerified() && isValidId(staffId);
-      allow list: if isVerified();
-      allow create: if isVerified() && isValidId(staffId) && isValidStaffMember(incoming()) &&
+      allow get: if isAllowedAccess() && isValidId(staffId);
+      allow list: if isAllowedAccess();
+      allow create: if isAllowedAccess() && isValidId(staffId) && isValidStaffMember(incoming()) &&
         (
           isAdmin() ||
           (
+            isAllowedDomainEmail() &&
             incoming().adminUid == request.auth.uid &&
             incoming().role == 'STAFF' &&
             incoming().inviteStatus == 'ACTIVE' &&
-            incoming().email == request.auth.token.email
+            (incoming().email == request.auth.token.email || incoming().email == request.auth.token.email.lower())
           )
         ) &&
         incoming().createdAt == request.time &&
         incoming().updatedAt == request.time;
-      allow update: if isVerified() && isValidId(staffId) && isValidStaffMember(incoming()) &&
+      allow update: if isAllowedAccess() && isValidId(staffId) && isValidStaffMember(incoming()) &&
         incoming().adminUid == existing().adminUid &&
         incoming().updatedAt == request.time && (
           (isAdmin() && (incoming().createdAt == existing().createdAt || incoming().createdAt == request.time)) ||
@@ -203,26 +259,26 @@ service cloud.firestore {
             ) ||
             (existing().role == incoming().role &&
               incoming().email == existing().email &&
-              incoming().email == request.auth.token.email &&
+              (incoming().email == request.auth.token.email || incoming().email == request.auth.token.email.lower()) &&
               incoming().inviteStatus == 'ACTIVE' &&
               (!('pin' in incoming()) || ('pin' in existing() && incoming().pin == existing().pin)) &&
               incoming().diff(existing()).affectedKeys().hasOnly(['inviteStatus', 'updatedAt'])
             )
           ))
         );
-      allow delete: if isVerified() && isValidId(staffId) && (
+      allow delete: if isAllowedAccess() && isValidId(staffId) && (
         existing().adminUid == request.auth.uid || isAdmin()
       );
     }
 
     match /students/{studentId} {
-      allow get: if isVerified() && isValidId(studentId);
-      allow list: if isVerified();
-      allow create: if isVerified() && isValidId(studentId) && isValidStudent(incoming()) &&
+      allow get: if isAllowedAccess() && isValidId(studentId);
+      allow list: if isAllowedAccess();
+      allow create: if isAllowedAccess() && isValidId(studentId) && isValidStudent(incoming()) &&
         (incoming().adminUid == request.auth.uid || isAdmin()) &&
         incoming().createdAt == request.time &&
         incoming().updatedAt == request.time;
-      allow update: if isVerified() && isValidId(studentId) && isValidStudent(incoming()) &&
+      allow update: if isAllowedAccess() && isValidId(studentId) && isValidStudent(incoming()) &&
         incoming().adminUid == existing().adminUid &&
         incoming().updatedAt == request.time && (
           (isAdmin() && (incoming().createdAt == existing().createdAt || incoming().createdAt == request.time)) ||
@@ -237,21 +293,21 @@ service cloud.firestore {
             ])
           ))
         );
-      allow delete: if isVerified() && isValidId(studentId) && (
+      allow delete: if isAllowedAccess() && isValidId(studentId) && (
         existing().adminUid == request.auth.uid || isAdmin()
       );
     }
 
     match /targets/{targetId} {
-      allow get: if isVerified() && isValidId(targetId);
-      allow list: if isVerified();
-      allow create: if isVerified() && isValidId(targetId) && isValidTarget(incoming()) &&
+      allow get: if isAllowedAccess() && isValidId(targetId);
+      allow list: if isAllowedAccess();
+      allow create: if isAllowedAccess() && isValidId(targetId) && isValidTarget(incoming()) &&
         (incoming().adminUid == request.auth.uid || isAdmin()) &&
         incoming().createdAt == request.time &&
         incoming().updatedAt == request.time &&
         exists(/databases/$(database)/documents/students/$(incoming().studentId)) &&
         (get(/databases/$(database)/documents/students/$(incoming().studentId)).data.adminUid == request.auth.uid || isAdmin());
-      allow update: if isVerified() && isValidId(targetId) && isValidTarget(incoming()) &&
+      allow update: if isAllowedAccess() && isValidId(targetId) && isValidTarget(incoming()) &&
         incoming().adminUid == existing().adminUid &&
         incoming().studentId == existing().studentId &&
         incoming().updatedAt == request.time && (
@@ -279,19 +335,19 @@ service cloud.firestore {
             ])
           ))
         );
-      allow delete: if isVerified() && isValidId(targetId) && (
+      allow delete: if isAllowedAccess() && isValidId(targetId) && (
         existing().adminUid == request.auth.uid || isAdmin()
       );
     }
 
     match /notifications/{notificationId} {
-      allow get: if isVerified() && isValidId(notificationId);
-      allow list: if isVerified();
-      allow create: if isVerified() && isValidId(notificationId) && isValidNotificationItem(incoming()) &&
+      allow get: if isAllowedAccess() && isValidId(notificationId);
+      allow list: if isAllowedAccess();
+      allow create: if isAllowedAccess() && isValidId(notificationId) && isValidNotificationItem(incoming()) &&
         (incoming().adminUid == request.auth.uid || isAdmin()) &&
         incoming().createdAt == request.time &&
         incoming().updatedAt == request.time;
-      allow update: if isVerified() && isValidId(notificationId) && isValidNotificationItem(incoming()) &&
+      allow update: if isAllowedAccess() && isValidId(notificationId) && isValidNotificationItem(incoming()) &&
         incoming().adminUid == existing().adminUid &&
         incoming().updatedAt == request.time && (
           (isAdmin() && (incoming().createdAt == existing().createdAt || incoming().createdAt == request.time)) ||
@@ -304,27 +360,28 @@ service cloud.firestore {
             )
           ))
         );
-      allow delete: if isVerified() && isValidId(notificationId) && (
+      allow delete: if isAllowedAccess() && isValidId(notificationId) && (
         existing().recipientEmail == request.auth.token.email ||
+        existing().recipientEmail == request.auth.token.email.lower() ||
         existing().adminUid == request.auth.uid ||
         isAdmin()
       );
     }
 
     match /archives/{archiveId} {
-      allow get: if isVerified() && isValidId(archiveId);
-      allow list: if isVerified();
-      allow create: if isVerified() && isValidId(archiveId) &&
+      allow get: if isAllowedAccess() && isValidId(archiveId);
+      allow list: if isAllowedAccess();
+      allow create: if isAllowedAccess() && isValidId(archiveId) &&
         (incoming().adminUid == request.auth.uid || isAdmin());
-      allow update: if isVerified() && isValidId(archiveId) &&
+      allow update: if isAllowedAccess() && isValidId(archiveId) &&
         (existing().adminUid == request.auth.uid || isAdmin());
-      allow delete: if isVerified() && isValidId(archiveId) &&
+      allow delete: if isAllowedAccess() && isValidId(archiveId) &&
         (existing().adminUid == request.auth.uid || isAdmin());
     }
 
     match /settings/{settingId} {
-      allow get: if isVerified() && isValidId(settingId);
-      allow list: if isVerified();
+      allow get: if isAllowedAccess() && isValidId(settingId);
+      allow list: if isAllowedAccess();
       allow create, update: if isAdmin() && isValidId(settingId);
       allow delete: if isAdmin() && isValidId(settingId);
     }
