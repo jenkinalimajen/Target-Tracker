@@ -54,7 +54,6 @@ export async function seedAcademicCohortData(
       department: 'Administration',
       role: 'ADMIN' as const,
       inviteStatus: 'ACTIVE' as const,
-      pin: '9042',
     },
     {
       id: 'staff_clara_vance',
@@ -64,7 +63,6 @@ export async function seedAcademicCohortData(
       department: 'English',
       role: 'STAFF' as const,
       inviteStatus: 'ACTIVE' as const,
-      pin: '4821',
     },
     {
       id: 'staff_david_okafor',
@@ -74,7 +72,6 @@ export async function seedAcademicCohortData(
       department: 'Science',
       role: 'STAFF' as const,
       inviteStatus: 'INVITED' as const,
-      pin: '7394',
     },
     {
       id: 'staff_hannah_lin',
@@ -84,7 +81,6 @@ export async function seedAcademicCohortData(
       department: 'Mathematics',
       role: 'STAFF' as const,
       inviteStatus: 'ACTIVE' as const,
-      pin: '5162',
     },
   ];
 
@@ -100,7 +96,6 @@ export async function seedAcademicCohortData(
           department: staff.department,
           role: staff.role,
           inviteStatus: staff.inviteStatus,
-          pin: staff.pin,
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
         });

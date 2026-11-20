@@ -35,7 +35,6 @@ import {
   Layers,
   RotateCcw,
   Search,
-  KeyRound,
 } from 'lucide-react';
 import {
   doc,
@@ -90,8 +89,6 @@ import {
   normalizeTargetFontColor,
   getTargetFontColorClass,
   groupTargetsHierarchically,
-  generateRandomStaffPin,
-  isValidStaffPin,
 } from '../types';
 
 const COPIED_STAFF_INTENT_KEY = 'targettrack_copied_staff_intent';
@@ -487,8 +484,6 @@ export const AdminOversight: React.FC<AdminOversightProps> = ({
 
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [copiedLinkKey, setCopiedLinkKey] = useState<string | null>(null);
-  const [expandedLoginDetailsId, setExpandedLoginDetailsId] = useState<string | null>(null);
-  const [copiedLoginDetailsId, setCopiedLoginDetailsId] = useState<string | null>(null);
 
   const currentWeekInfo = useMemo(
     () => buildWeekScheduleFromOffset(0, 0, weekSetup),
@@ -2705,7 +2700,9 @@ export const AdminOversight: React.FC<AdminOversightProps> = ({
     const notifId = generateSafeId('notif');
     const deadline = getUpcomingFridayDeadline(0, weekSetup);
     const shareUrl = buildStaffShareLink(cleanEmail);
-    const assignedPin = generateRandomStaffPin();
+    const resolvedRole: UserRole = isOwnerAdminEmail(cleanEmail)
+      ? 'ADMIN'
+      : inviteRole;
 
     try {
       await setDoc(doc(db, 'staff', staffId), {
@@ -2713,22 +2710,29 @@ export const AdminOversight: React.FC<AdminOversightProps> = ({
         name: cleanName,
         email: cleanEmail,
         department: cleanDept,
-        role: inviteRole,
+        role: resolvedRole,
         inviteStatus: 'INVITED',
-        pin: assignedPin,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
+
+      if (resolvedRole === 'ADMIN') {
+        await setDoc(doc(db, 'admin_emails', cleanEmail), {
+          email: cleanEmail,
+          grantedByUid: auth.currentUser?.uid || adminUid,
+          updatedAt: serverTimestamp(),
+        });
+      }
 
       await setDoc(doc(db, 'notifications', notifId), {
         adminUid,
         recipientEmail: cleanEmail,
         recipientName: cleanName,
         type: 'INVITATION',
-        title: `Invited as ${inviteRole}: ${cleanDept}`,
-        message: `Use ${cleanEmail} and your 4-digit PIN to sign in to your ${
-          inviteRole === 'ADMIN' ? 'Administrator' : 'Staff'
-        } account.`,
+        title: `Invited as ${resolvedRole}: ${cleanDept}`,
+        message: `Sign in with Google using ${cleanEmail} to access your ${
+          resolvedRole === 'ADMIN' ? 'Administrator' : 'Staff'
+        } dashboard.`,
         studentId: 'all',
         studentName: 'All Assigned Students',
         subject: cleanDept,
@@ -2742,7 +2746,7 @@ export const AdminOversight: React.FC<AdminOversightProps> = ({
       copyToClipboardFallback(shareUrl);
       setInviteName('');
       setInviteEmail('');
-      notify(`Invited ${cleanName} (${cleanEmail}) with 4-digit PIN ${assignedPin}.`);
+      notify(`Invited ${cleanName} (${cleanEmail}) as ${resolvedRole}.`);
     } catch (error) {
       handleFirestoreError(error, OperationType.CREATE, `staff/${staffId}`);
     } finally {
@@ -2750,23 +2754,13 @@ export const AdminOversight: React.FC<AdminOversightProps> = ({
     }
   };
 
-  const handleToggleViewLoginDetails = async (staff: StaffMember) => {
-    const nextExpanded = expandedLoginDetailsId === staff.id ? null : staff.id;
-    setExpandedLoginDetailsId(nextExpanded);
-    if (nextExpanded && !isValidStaffPin(staff.pin)) {
-      const assignedPin = generateRandomStaffPin();
-      try {
-        await updateDoc(doc(db, 'staff', staff.id), {
-          pin: assignedPin,
-          updatedAt: serverTimestamp(),
-        });
-      } catch (error) {
-        handleFirestoreError(error, OperationType.UPDATE, `staff/${staff.id}`);
-      }
-    }
-  };
-
   const handleUpdateUserRole = async (staff: StaffMember, newRole: UserRole) => {
+    const cleanEmail = staff.email.trim().toLowerCase();
+    if (isOwnerAdminEmail(cleanEmail) && newRole !== 'ADMIN') {
+      notify('Primary administrator role cannot be removed.');
+      return;
+    }
+
     const path = `staff/${staff.id}`;
     try {
       await updateDoc(doc(db, 'staff', staff.id), {
@@ -2774,9 +2768,20 @@ export const AdminOversight: React.FC<AdminOversightProps> = ({
         email: staff.email,
         department: staff.department,
         role: newRole,
-        inviteStatus: staff.inviteStatus || 'INVITED',
+        inviteStatus: staff.inviteStatus || 'ACTIVE',
         updatedAt: serverTimestamp(),
       });
+
+      if (newRole === 'ADMIN') {
+        await setDoc(doc(db, 'admin_emails', cleanEmail), {
+          email: cleanEmail,
+          grantedByUid: auth.currentUser?.uid || adminUid,
+          updatedAt: serverTimestamp(),
+        });
+      } else {
+        await deleteDoc(doc(db, 'admin_emails', cleanEmail)).catch(() => {});
+      }
+
       notify(`Updated ${staff.name}'s role to ${newRole}.`);
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, path);
@@ -2889,6 +2894,7 @@ export const AdminOversight: React.FC<AdminOversightProps> = ({
       }
 
       await deleteDoc(doc(db, 'staff', targetStaff.id));
+      await deleteDoc(doc(db, 'admin_emails', staffEmailLower)).catch(() => {});
       setPendingDeleteStaff(null);
       notify(`Deleted ${targetStaff.name}.`);
     } catch (error) {
@@ -6621,8 +6627,10 @@ export const AdminOversight: React.FC<AdminOversightProps> = ({
               {staffList.map((user) => {
                 const userShareUrl = buildStaffShareLink(user.email);
                 const isCopied = copiedLinkKey === `dir_${user.id}`;
-                const isDetailsOpen = expandedLoginDetailsId === user.id;
-                const isDetailsCopied = copiedLoginDetailsId === user.id;
+                const isPrimaryOwner = isOwnerAdminEmail(user.email);
+                const effectiveRole: UserRole = isPrimaryOwner
+                  ? 'ADMIN'
+                  : user.role || 'STAFF';
                 return (
                   <div key={user.id} className="py-3 space-y-2 text-xs">
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
@@ -6645,23 +6653,7 @@ export const AdminOversight: React.FC<AdminOversightProps> = ({
                       </div>
 
                       <div className="flex flex-wrap items-center gap-2 shrink-0">
-                        <button
-                          type="button"
-                          onClick={() => handleToggleViewLoginDetails(user)}
-                          className={`px-2.5 py-1 text-xs font-semibold border rounded inline-flex items-center gap-1 whitespace-nowrap shrink-0 transition-colors ${
-                            isDetailsOpen
-                              ? 'bg-indigo-600 border-indigo-600 text-white'
-                              : isDark
-                              ? 'bg-slate-800 border-slate-700 text-indigo-300 hover:bg-slate-700'
-                              : 'border-indigo-300 bg-indigo-50 text-indigo-800 hover:bg-indigo-100'
-                          }`}
-                          title="View username, 4-digit PIN, and direct link"
-                        >
-                          <KeyRound className="w-3 h-3" />
-                          <span>View Login Details</span>
-                        </button>
-
-                        {user.role !== 'ADMIN' && (
+                        {effectiveRole !== 'ADMIN' && (
                           <a
                             href={userShareUrl}
                             target="_blank"
@@ -6707,14 +6699,20 @@ export const AdminOversight: React.FC<AdminOversightProps> = ({
                         </button>
 
                         <select
-                          value={user.role || 'STAFF'}
+                          value={effectiveRole}
+                          disabled={isPrimaryOwner}
+                          title={
+                            isPrimaryOwner
+                              ? 'Primary administrator role is fixed'
+                              : 'Promote or demote user role'
+                          }
                           onChange={(e) =>
                             handleUpdateUserRole(
                               user,
                               e.target.value as UserRole
                             )
                           }
-                          className={`text-xs border rounded px-2 py-1 font-medium ${
+                          className={`text-xs border rounded px-2 py-1 font-medium disabled:opacity-60 disabled:cursor-not-allowed ${
                             isDark
                               ? 'bg-slate-800 border-slate-700 text-slate-200'
                               : 'border-slate-300 bg-white text-slate-900'
@@ -6727,13 +6725,16 @@ export const AdminOversight: React.FC<AdminOversightProps> = ({
                         <button
                           type="button"
                           disabled={
+                            isPrimaryOwner ||
                             user.email.trim().toLowerCase() ===
-                            (auth.currentUser?.email || '').trim().toLowerCase()
+                              (auth.currentUser?.email || '').trim().toLowerCase()
                           }
                           onClick={() => setPendingDeleteStaff(user)}
                           title={
-                            user.email.trim().toLowerCase() ===
-                            (auth.currentUser?.email || '').trim().toLowerCase()
+                            isPrimaryOwner
+                              ? 'Primary administrator cannot be deleted'
+                              : user.email.trim().toLowerCase() ===
+                                (auth.currentUser?.email || '').trim().toLowerCase()
                               ? 'Cannot delete active signed-in account'
                               : `Delete ${user.name}`
                           }
@@ -6743,81 +6744,6 @@ export const AdminOversight: React.FC<AdminOversightProps> = ({
                         </button>
                       </div>
                     </div>
-
-                    {isDetailsOpen && (
-                      <div
-                        className={`rounded-md border p-3 space-y-2 ${
-                          isDark
-                            ? 'bg-slate-900 border-indigo-700/60 text-slate-200'
-                            : 'bg-indigo-50/70 border-indigo-200 text-slate-900'
-                        }`}
-                      >
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <span className="text-[11px] font-bold uppercase tracking-wide text-indigo-700">
-                            Login Details — {user.name}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const detailsText = `TargetTrack Login Details (${user.name})\nUsername: ${user.email}\n4-Digit PIN: ${user.pin || 'Not assigned yet'}\nDirect Link: ${userShareUrl}`;
-                              copyToClipboardFallback(detailsText);
-                              navigator.clipboard?.writeText(detailsText).catch(() => {});
-                              setCopiedLoginDetailsId(user.id);
-                              notify(`Copied login details for ${user.name}.`);
-                              setTimeout(() => {
-                                setCopiedLoginDetailsId((prev) =>
-                                  prev === user.id ? null : prev
-                                );
-                              }, 2500);
-                            }}
-                            className="px-2.5 py-1 text-[11px] font-semibold rounded bg-indigo-600 hover:bg-indigo-700 text-white inline-flex items-center gap-1"
-                          >
-                            {isDetailsCopied ? (
-                              <Check className="w-3 h-3" />
-                            ) : (
-                              <KeyRound className="w-3 h-3" />
-                            )}
-                            <span>
-                              {isDetailsCopied
-                                ? 'Copied Details'
-                                : 'Copy Login Details'}
-                            </span>
-                          </button>
-                        </div>
-
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                          <div
-                            className={`rounded border px-2.5 py-1.5 ${
-                              isDark
-                                ? 'bg-slate-800 border-slate-700'
-                                : 'bg-white border-indigo-200'
-                            }`}
-                          >
-                            <div className="text-[10px] font-semibold uppercase text-slate-500">
-                              Username (Registered Email)
-                            </div>
-                            <div className="font-mono font-bold text-xs break-all select-all">
-                              {user.email}
-                            </div>
-                          </div>
-
-                          <div
-                            className={`rounded border px-2.5 py-1.5 ${
-                              isDark
-                                ? 'bg-slate-800 border-slate-700'
-                                : 'bg-white border-indigo-200'
-                            }`}
-                          >
-                            <div className="text-[10px] font-semibold uppercase text-slate-500">
-                              Fixed 4-Digit PIN Password
-                            </div>
-                            <div className="font-mono font-black text-base tracking-widest text-indigo-700 select-all">
-                              {user.pin || 'Generating...'}
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    )}
 
                     <input
                       type="text"

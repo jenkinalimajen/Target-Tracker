@@ -12,7 +12,6 @@ import {
 } from 'firebase/auth';
 import {
   collection,
-  getDocs,
   onSnapshot,
   doc,
   setDoc,
@@ -24,10 +23,6 @@ import {
   ArrowLeft,
   Shield,
   Users,
-  KeyRound,
-  Eye,
-  EyeOff,
-  Clock,
 } from 'lucide-react';
 import {
   auth,
@@ -41,19 +36,18 @@ import {
   Student,
   Target,
   NotificationItem,
+  UserRole,
   WeekSetupConfig,
   getSavedWeekSetupConfig,
   saveWeekSetupConfigToLocal,
-  getSavedAcademicTerms,
   saveAcademicTermsToLocal,
   sanitizeAcademicTerms,
+  sanitizeBoundedString,
   formatTermTitleWithYear,
   buildWeekScheduleFromOffset,
   getUpcomingFridayDeadline,
   computeUpdatedHistorySummary,
   isOwnerAdminEmail,
-  generateRandomStaffPin,
-  isValidStaffPin,
 } from './types';
 import { seedAcademicCohortData } from './seedData';
 import { StaffDashboard } from './components/StaffDashboard';
@@ -63,13 +57,6 @@ import {
   isPublicDeployedOrigin,
   extractStaffEmailFromLocation,
 } from './utils/shareLinks';
-import {
-  StaffPinSession,
-  loadActiveStaffPinSession,
-  saveStaffPinSession,
-  clearActiveStaffPinSession,
-  formatNextRefreshSummary,
-} from './utils/staffAuthSession';
 
 const COPIED_STAFF_INTENT_KEY = 'targettrack_copied_staff_intent';
 
@@ -79,48 +66,13 @@ export default function App() {
   const [isSigningIn, setIsSigningIn] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
 
-  // Direct link (?staff=email#staff=email) from the URL (never grants access without PIN unless Admin is viewing)
+  // Direct link (?staff=email#staff=email) from the URL
   const [urlStaffEmail, setUrlStaffEmail] = useState<string>(() =>
     extractStaffEmailFromLocation()
   );
 
-  // Admin preview state (only active when signed in as verified Admin)
+  // Admin preview state (only active when signed in as an Admin)
   const [adminPreviewStaffEmail, setAdminPreviewStaffEmail] = useState<string>('');
-
-  // Initial Staff PIN session state (checks 3:15 PM daily refresh expiry on load)
-  const initialPinStateRef = useRef(loadActiveStaffPinSession());
-  const [staffSession, setStaffSession] = useState<StaffPinSession | null>(
-    () => {
-      const initialUrlEmail = extractStaffEmailFromLocation();
-      const loaded = initialPinStateRef.current.session;
-      // Keep direct links exclusive: if URL specifies a different staff email, require PIN for that email
-      if (loaded && initialUrlEmail && loaded.email !== initialUrlEmail) {
-        return null;
-      }
-      return loaded;
-    }
-  );
-
-  const [loginEmailInput, setLoginEmailInput] = useState<string>(() => {
-    const initialUrlEmail = extractStaffEmailFromLocation();
-    return (
-      initialUrlEmail ||
-      initialPinStateRef.current.rememberedEmail ||
-      ''
-    );
-  });
-  const [loginPinInput, setLoginPinInput] = useState<string>('');
-  const [showPinDigits, setShowPinDigits] = useState(false);
-  const [rememberCredentials, setRememberCredentials] = useState<boolean>(() =>
-    Boolean(initialPinStateRef.current.rememberedEmail)
-  );
-  const [isVerifyingPin, setIsVerifyingPin] = useState(false);
-  const [pinLoginError, setPinLoginError] = useState<string | null>(null);
-  const [refreshNotice, setRefreshNotice] = useState<string | null>(() =>
-    initialPinStateRef.current.expiredByRefresh
-      ? 'Daily 3:15 PM system refresh completed. Please re-enter your 4-digit PIN to stay signed in today.'
-      : null
-  );
 
   const [staffList, setStaffList] = useState<StaffMember[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
@@ -158,8 +110,10 @@ export default function App() {
     };
   }, []);
 
-  // Keep terms_config locked/archived state synced persistently
+  // Keep terms_config locked/archived state synced persistently once signed in
   useEffect(() => {
+    if (!isAuthReady || !currentUser) return;
+
     const unsubTerms = onSnapshot(
       doc(db, 'settings', 'terms_config'),
       (snapshot) => {
@@ -235,12 +189,12 @@ export default function App() {
       unsubTerms();
       unsubShare();
     };
-  }, []);
+  }, [isAuthReady, currentUser]);
 
   const hasAutoSeededRef = useRef(false);
   const hasBackfilledNotificationsRef = useRef(false);
   const hasBackfilledHistoryRef = useRef(false);
-  const backfilledPinIdsRef = useRef<Set<string>>(new Set());
+  const autoRegisteredEmailsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
@@ -256,19 +210,11 @@ export default function App() {
       const fromUrl = extractStaffEmailFromLocation();
       if (fromUrl) {
         setUrlStaffEmail(fromUrl);
-        setLoginEmailInput(fromUrl);
-        setPinLoginError(null);
         try {
           localStorage.removeItem(COPIED_STAFF_INTENT_KEY);
         } catch {
           // ignore
         }
-        setStaffSession((prev) => {
-          if (prev && prev.email !== fromUrl) {
-            return null;
-          }
-          return prev;
-        });
       }
     };
 
@@ -280,56 +226,16 @@ export default function App() {
     };
   }, []);
 
-  // Enforce daily 3:15 PM system refresh:
-  // If user ticked Remember, keep ONLY username after 3:15 PM and require re-entering PIN password.
-  // If user did NOT tick Remember, clear both username and password after 3:15 PM.
-  useEffect(() => {
-    if (!staffSession) return;
-
-    const triggerDailyRefreshIfDue = () => {
-      if (Date.now() < staffSession.expiresAt) return;
-
-      const wasRemembered = staffSession.remember;
-      const rememberedEmail = wasRemembered ? staffSession.email : '';
-      clearActiveStaffPinSession(wasRemembered);
-      setStaffSession(null);
-      setLoginPinInput('');
-      setRememberCredentials(wasRemembered);
-      setLoginEmailInput(urlStaffEmail || rememberedEmail || '');
-      setRefreshNotice(
-        'Daily 3:15 PM system refresh completed. Please enter your 4-digit PIN to sign in for today.'
-      );
-    };
-
-    triggerDailyRefreshIfDue();
-    const msRemaining = Math.max(500, staffSession.expiresAt - Date.now());
-    const timeoutId = window.setTimeout(
-      triggerDailyRefreshIfDue,
-      Math.min(msRemaining, 2147483647)
-    );
-    const intervalId = window.setInterval(triggerDailyRefreshIfDue, 30000);
-    window.addEventListener('focus', triggerDailyRefreshIfDue);
-    document.addEventListener('visibilitychange', triggerDailyRefreshIfDue);
-
-    return () => {
-      window.clearTimeout(timeoutId);
-      window.clearInterval(intervalId);
-      window.removeEventListener('focus', triggerDailyRefreshIfDue);
-      document.removeEventListener('visibilitychange', triggerDailyRefreshIfDue);
-    };
-  }, [staffSession, urlStaffEmail]);
-
   const userEmail = currentUser?.email?.trim().toLowerCase() || '';
 
   const signedInUserRecord = userEmail
     ? staffList.find((s) => s.email.trim().toLowerCase() === userEmail)
     : undefined;
 
+  // Only j.alimajen_wis@gemswis.com receives Admin automatically; others only receive Admin if manually promoted in Staff Management
   const isOwnerUser = Boolean(
     currentUser &&
-      (isOwnerAdminEmail(userEmail) ||
-        signedInUserRecord?.role === 'ADMIN' ||
-        staffList.length === 0)
+      (isOwnerAdminEmail(userEmail) || signedInUserRecord?.role === 'ADMIN')
   );
 
   // Authenticated Admin can preview a staff dashboard via dropdown/Staff Portal tab OR by opening a ?staff= link while signed in as Admin
@@ -339,11 +245,7 @@ export default function App() {
       : '';
 
   // Effective staff email when viewing StaffDashboard
-  const effectiveStaffEmail = (
-    effectiveAdminPreviewEmail ||
-    staffSession?.email ||
-    userEmail
-  )
+  const effectiveStaffEmail = (effectiveAdminPreviewEmail || userEmail)
     .trim()
     .toLowerCase();
 
@@ -382,29 +284,25 @@ export default function App() {
     currentUser && isOwnerUser && !effectiveAdminPreviewEmail
   );
 
-  const hasActiveSession = Boolean(
-    (currentUser && userEmail) ||
-      (staffSession &&
-        Date.now() < staffSession.expiresAt &&
-        (!urlStaffEmail || staffSession.email === urlStaffEmail))
-  );
+  const hasActiveSession = Boolean(currentUser && userEmail);
 
   useEffect(() => {
-    if (!isAuthReady && !staffSession) {
+    if (!isAuthReady) {
       return;
     }
-    if (!hasActiveSession) {
+    if (!hasActiveSession || !currentUser) {
       setStaffList([]);
       setHasLoadedStaff(false);
       setStudents([]);
       setTargets([]);
       setNotifications([]);
+      autoRegisteredEmailsRef.current.clear();
       return;
     }
 
     setIsLoadingData(true);
     setHasLoadedStaff(false);
-    const uid = currentUser?.uid || '';
+    const uid = currentUser.uid;
 
     // Unified real-time collection listeners so Admin and authenticated Staff receive identical real-time updates
     const staffQuery = collection(db, 'staff');
@@ -422,53 +320,58 @@ export default function App() {
         setStaffList(items);
         setHasLoadedStaff(true);
 
-        // If signed in via Staff PIN session, verify staff record & PIN still match
-        if (staffSession && !currentUser) {
-          const activeRec = items.find(
-            (s) => s.email.trim().toLowerCase() === staffSession.email
+        // Automatically register any new Google Sign-In user with STAFF role by default
+        // (only j.alimajen_wis@gemswis.com receives ADMIN role automatically)
+        if (!snapshot.metadata.fromCache && currentUser.emailVerified && userEmail) {
+          const myRecord = items.find(
+            (s) => s.email.trim().toLowerCase() === userEmail
           );
-          if (
-            !activeRec ||
-            (isValidStaffPin(activeRec.pin) && activeRec.pin !== staffSession.pin)
-          ) {
-            clearActiveStaffPinSession(staffSession.remember);
-            setStaffSession(null);
-            setLoginPinInput('');
-            setPinLoginError(
-              'Your login details were updated by an administrator. Please sign in again.'
-            );
-            return;
+          const isPrimaryAdmin = isOwnerAdminEmail(userEmail);
+
+          if (!myRecord && !autoRegisteredEmailsRef.current.has(userEmail)) {
+            autoRegisteredEmailsRef.current.add(userEmail);
+            const assignedRole: UserRole = isPrimaryAdmin ? 'ADMIN' : 'STAFF';
+            const docId = isPrimaryAdmin
+              ? 'staff_admin_owner'
+              : `staff_${uid}`;
+
+            setDoc(doc(db, 'staff', docId), {
+              adminUid: uid,
+              name: sanitizeBoundedString(
+                currentUser.displayName || userEmail.split('@')[0],
+                100,
+                'Staff Member'
+              ),
+              email: userEmail,
+              department: isPrimaryAdmin ? 'Administration' : 'Staff',
+              role: assignedRole,
+              inviteStatus: 'ACTIVE',
+              createdAt: serverTimestamp(),
+              updatedAt: serverTimestamp(),
+            }).catch(() => {
+              autoRegisteredEmailsRef.current.delete(userEmail);
+            });
+          } else if (myRecord) {
+            if (isPrimaryAdmin && myRecord.role !== 'ADMIN') {
+              updateDoc(doc(db, 'staff', myRecord.id), {
+                role: 'ADMIN',
+                inviteStatus: 'ACTIVE',
+                updatedAt: serverTimestamp(),
+              }).catch(() => {});
+            } else if (myRecord.inviteStatus === 'INVITED') {
+              updateDoc(doc(db, 'staff', myRecord.id), {
+                inviteStatus: 'ACTIVE',
+                updatedAt: serverTimestamp(),
+              }).catch(() => {});
+            }
           }
         }
 
         for (const item of items) {
-          // Backfill fixed random 4-digit PIN for any existing staff doc lacking one when Admin is online
-          if (
-            isOwnerUser &&
-            currentUser?.emailVerified &&
-            !isValidStaffPin(item.pin) &&
-            !backfilledPinIdsRef.current.has(item.id)
-          ) {
-            backfilledPinIdsRef.current.add(item.id);
-            updateDoc(doc(db, 'staff', item.id), {
-              pin: generateRandomStaffPin(),
-              updatedAt: serverTimestamp(),
-            }).catch(() => {
-              backfilledPinIdsRef.current.delete(item.id);
-            });
-          } else if (
-            item.email.trim().toLowerCase() === effectiveStaffEmail &&
-            item.inviteStatus === 'INVITED' &&
-            item.role
-          ) {
-            updateDoc(doc(db, 'staff', item.id), {
-              inviteStatus: 'ACTIVE',
-              updatedAt: serverTimestamp(),
-            }).catch(() => {});
-          } else if (isOwnerUser && !item.role) {
-            const inferredRole = isOwnerAdminEmail(item.email)
-                ? 'ADMIN'
-                : 'STAFF';
+          if (isOwnerUser && !item.role) {
+            const inferredRole: UserRole = isOwnerAdminEmail(item.email)
+              ? 'ADMIN'
+              : 'STAFF';
             updateDoc(doc(db, 'staff', item.id), {
               name: item.name,
               email: item.email,
@@ -714,102 +617,22 @@ export default function App() {
     hasActiveSession,
     currentUser,
     userEmail,
-    staffSession,
-    effectiveStaffEmail,
     isOwnerUser,
   ]);
 
-  const handleAdminGoogleSignIn = async () => {
+  const handleGoogleSignIn = async () => {
     setIsSigningIn(true);
     setAuthError(null);
     try {
-      const provider = createGoogleProviderWithHint(urlStaffEmail || loginEmailInput);
+      const provider = createGoogleProviderWithHint(urlStaffEmail);
       await signInWithPopup(auth, provider);
     } catch (error) {
       setAuthError(
-        error instanceof Error ? error.message : 'Admin sign-in interrupted.'
+        error instanceof Error ? error.message : 'Google sign-in interrupted.'
       );
     } finally {
       setIsSigningIn(false);
     }
-  };
-
-  const handleStaffPinSignIn = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const cleanEmail = loginEmailInput.trim().toLowerCase();
-    const cleanPin = loginPinInput.trim();
-
-    if (!cleanEmail || !cleanEmail.includes('@')) {
-      setPinLoginError('Please enter your registered staff email username.');
-      return;
-    }
-    if (!/^\d{4}$/.test(cleanPin)) {
-      setPinLoginError('Please enter your 4-digit numeric PIN password.');
-      return;
-    }
-
-    setIsVerifyingPin(true);
-    setPinLoginError(null);
-    setRefreshNotice(null);
-
-    try {
-      const snapshot = await getDocs(collection(db, 'staff'));
-      const matchedDoc = snapshot.docs
-        .map((d) => ({
-          id: d.id,
-          ...(d.data() as Omit<StaffMember, 'id'>),
-        }))
-        .find((s) => s.email.trim().toLowerCase() === cleanEmail);
-
-      if (!matchedDoc) {
-        setPinLoginError(
-          'Username not found. It must match the exact email registered by your administrator.'
-        );
-        return;
-      }
-
-      if (!isValidStaffPin(matchedDoc.pin)) {
-        setPinLoginError(
-          'A 4-digit PIN has not been assigned to this account yet. Ask your administrator to click "View Login Details" in Staff Management.'
-        );
-        return;
-      }
-
-      if (matchedDoc.pin !== cleanPin) {
-        setPinLoginError(
-          'Incorrect 4-digit PIN password. If you forgot it, ask your administrator to view your login details.'
-        );
-        return;
-      }
-
-      const nextSession = saveStaffPinSession({
-        email: cleanEmail,
-        pin: cleanPin,
-        remember: rememberCredentials,
-      });
-
-      setStaffSession(nextSession);
-      setLoginPinInput('');
-    } catch (error) {
-      setPinLoginError(
-        error instanceof Error
-          ? error.message
-          : 'Unable to verify login details. Check connection and try again.'
-      );
-    } finally {
-      setIsVerifyingPin(false);
-    }
-  };
-
-  const handleStaffSignOut = () => {
-    const keepEmail = Boolean(staffSession?.remember);
-    const prevEmail = staffSession?.email || '';
-    clearActiveStaffPinSession(keepEmail);
-    setStaffSession(null);
-    setLoginPinInput('');
-    setPinLoginError(null);
-    setRefreshNotice(null);
-    setLoginEmailInput(urlStaffEmail || (keepEmail ? prevEmail : ''));
   };
 
   const handleOpenAdminStaffPreview = (staffEmail: string) => {
@@ -920,24 +743,11 @@ export default function App() {
             </div>
           )}
 
-          {((currentUser && !isOwnerUser) || (!currentUser && staffSession)) ? (
+          {currentUser && !isOwnerUser ? (
             <div className="hidden sm:flex items-center gap-2.5 text-xs text-slate-500">
-              <span>
-                {showAdminDashboard ? 'Admin Account' : 'Staff Dashboard'}
-              </span>
+              <span>Staff Dashboard</span>
               <span aria-hidden="true">·</span>
-              <span className="font-mono text-slate-700">
-                {showAdminDashboard ? userEmail : effectiveStaffEmail}
-              </span>
-              {!currentUser && staffSession && (
-                <>
-                  <span aria-hidden="true">·</span>
-                  <span className="inline-flex items-center gap-1 text-[11px] text-emerald-700 font-medium">
-                    <Clock className="w-3 h-3" />
-                    Active until {formatNextRefreshSummary(staffSession.expiresAt)}
-                  </span>
-                </>
-              )}
+              <span className="font-mono text-slate-700">{effectiveStaffEmail}</span>
             </div>
           ) : null}
 
@@ -953,33 +763,10 @@ export default function App() {
               </button>
             )}
 
-            {!currentUser &&
-              staffSession &&
-              (matchedUserRecord?.role === 'ADMIN' ||
-                isOwnerAdminEmail(staffSession.email)) && (
-                <button
-                  type="button"
-                  onClick={handleAdminGoogleSignIn}
-                  disabled={isSigningIn}
-                  className="px-3 py-1.5 text-xs font-semibold rounded-md inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 bg-slate-900 text-white hover:bg-slate-800"
-                >
-                  <Shield className="w-3.5 h-3.5" />
-                  <span>Open Admin Portal</span>
-                </button>
-              )}
-
             {currentUser ? (
               <button
                 type="button"
                 onClick={() => signOut(auth)}
-                className="px-3.5 py-1.5 text-xs font-medium border rounded-md transition-colors whitespace-nowrap shrink-0 bg-white border-slate-300 text-slate-700 hover:bg-slate-50"
-              >
-                Sign Out
-              </button>
-            ) : staffSession ? (
-              <button
-                type="button"
-                onClick={handleStaffSignOut}
                 className="px-3.5 py-1.5 text-xs font-medium border rounded-md transition-colors whitespace-nowrap shrink-0 bg-white border-slate-300 text-slate-700 hover:bg-slate-50"
               >
                 Sign Out
@@ -990,138 +777,29 @@ export default function App() {
 
         {/* Main Content */}
         <main className="flex-1 max-w-5xl w-full mx-auto px-6 py-8">
-          {!isAuthReady && !staffSession ? (
+          {!isAuthReady ? (
             <div className="text-center py-12 text-xs text-slate-500">
               Checking browser login session...
             </div>
           ) : !hasActiveSession ? (
             <div className="max-w-md mx-auto bg-white border border-slate-200 rounded-lg p-6 mt-10 space-y-5 shadow-xs">
               <div className="space-y-1">
-                <div className="flex items-center gap-2">
-                  <div className="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0">
-                    <KeyRound className="w-4 h-4" />
-                  </div>
-                  <div>
-                    <h1 className="text-lg font-bold text-slate-900">
-                      TargetTrack Staff Sign-In
-                    </h1>
-                    <p className="text-xs text-slate-500">
-                      Sign in with your registered email username and 4-digit PIN.
-                    </p>
-                  </div>
-                </div>
+                <h1 className="text-lg font-bold text-slate-900">
+                  TargetTrack Sign-In
+                </h1>
+                <p className="text-xs text-slate-500">
+                  Sign in with your Google account to access your dashboard.
+                </p>
               </div>
 
               {urlStaffEmail && (
                 <div className="p-2.5 rounded-md bg-emerald-50 border border-emerald-200 text-xs text-emerald-900 flex items-center justify-between gap-2">
                   <span>
-                    Personal link for{' '}
+                    Direct link for{' '}
                     <strong className="font-mono">{urlStaffEmail}</strong>
                   </span>
                 </div>
               )}
-
-              {refreshNotice && (
-                <div className="p-2.5 bg-amber-50 border border-amber-200 rounded text-xs text-amber-900 flex items-start gap-2">
-                  <Clock className="w-3.5 h-3.5 text-amber-700 shrink-0 mt-0.5" />
-                  <span>{refreshNotice}</span>
-                </div>
-              )}
-
-              {pinLoginError && (
-                <div className="p-2.5 bg-red-50 border border-red-200 rounded text-xs text-red-700">
-                  {pinLoginError}
-                </div>
-              )}
-
-              <form onSubmit={handleStaffPinSignIn} className="space-y-3.5">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Username (Registered Email)
-                  </label>
-                  <input
-                    type="email"
-                    required
-                    autoComplete="username"
-                    placeholder="e.g. name@gemswis.com"
-                    value={loginEmailInput}
-                    onChange={(e) => setLoginEmailInput(e.target.value)}
-                    className="w-full text-xs bg-white border border-slate-300 rounded-md px-3 py-2.5 text-slate-900 focus:outline-none focus:border-slate-900 font-mono"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    4-Digit PIN Password
-                  </label>
-                  <div className="relative">
-                    <input
-                      type={showPinDigits ? 'text' : 'password'}
-                      required
-                      inputMode="numeric"
-                      maxLength={4}
-                      pattern="\d{4}"
-                      autoComplete="current-password"
-                      placeholder="••••"
-                      value={loginPinInput}
-                      onChange={(e) => {
-                        const digitsOnly = e.target.value.replace(/\D/g, '').slice(0, 4);
-                        setLoginPinInput(digitsOnly);
-                      }}
-                      className="w-full text-sm tracking-[0.35em] bg-white border border-slate-300 rounded-md pl-3 pr-10 py-2.5 text-slate-900 focus:outline-none focus:border-slate-900 font-mono"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowPinDigits((prev) => !prev)}
-                      className="absolute inset-y-0 right-0 px-3 flex items-center text-slate-400 hover:text-slate-700"
-                      title={showPinDigits ? 'Hide PIN' : 'Show PIN'}
-                    >
-                      {showPinDigits ? (
-                        <EyeOff className="w-4 h-4" />
-                      ) : (
-                        <Eye className="w-4 h-4" />
-                      )}
-                    </button>
-                  </div>
-                </div>
-
-                <label className="flex items-start gap-2.5 cursor-pointer select-none pt-0.5">
-                  <input
-                    type="checkbox"
-                    checked={rememberCredentials}
-                    onChange={(e) => setRememberCredentials(e.target.checked)}
-                    className="mt-0.5 h-4 w-4 rounded border-slate-300 text-emerald-700 focus:ring-emerald-600"
-                  />
-                  <span className="text-xs text-slate-700 leading-snug">
-                    <span className="font-semibold">
-                      Remember username and password
-                    </span>
-                    <span className="block text-[11px] text-slate-500">
-                      Keeps you signed in until the daily 3:15 PM system refresh. After 3:15 PM, only your username is remembered and you will re-enter your PIN.
-                    </span>
-                  </span>
-                </label>
-
-                <button
-                  type="submit"
-                  disabled={isVerifyingPin}
-                  className="w-full py-2.5 px-4 bg-emerald-700 hover:bg-emerald-800 disabled:opacity-60 text-white text-xs font-bold rounded-md transition-colors flex items-center justify-center gap-2"
-                >
-                  <KeyRound className="w-3.5 h-3.5" />
-                  {isVerifyingPin ? 'Verifying PIN...' : 'Sign In with PIN'}
-                </button>
-              </form>
-
-              <div className="relative my-2">
-                <div className="absolute inset-0 flex items-center">
-                  <div className="w-full border-t border-slate-200"></div>
-                </div>
-                <div className="relative flex justify-center text-xs uppercase">
-                  <span className="bg-white px-2 text-slate-400 font-medium text-[10px]">
-                    Administrator Access
-                  </span>
-                </div>
-              </div>
 
               {authError && (
                 <div className="p-2.5 bg-red-50 border border-red-200 rounded text-xs text-red-700">
@@ -1131,14 +809,14 @@ export default function App() {
 
               <button
                 type="button"
-                onClick={handleAdminGoogleSignIn}
+                onClick={handleGoogleSignIn}
                 disabled={isSigningIn}
-                className="w-full py-2 px-4 bg-white hover:bg-slate-50 border border-slate-300 text-slate-700 text-xs font-semibold rounded-md transition-colors flex items-center justify-center gap-2"
+                className="w-full py-2.5 px-4 bg-slate-900 hover:bg-slate-800 disabled:opacity-60 text-white text-xs font-bold rounded-md transition-colors flex items-center justify-center gap-2"
               >
                 <LogIn className="w-3.5 h-3.5" />
                 {isSigningIn
                   ? 'Connecting to Google...'
-                  : 'Admin Sign-In with Google'}
+                  : 'Sign in with Google'}
               </button>
             </div>
           ) : isLoadingData || !hasLoadedStaff ? (

@@ -438,12 +438,43 @@
         "baseFridayIso",
         "updatedAt"
       ]
+    },
+    "AdminEmailGrant": {
+      "title": "AdminEmailGrant",
+      "description": "Email allowlist record written by an Admin when promoting a user to ADMIN role.",
+      "type": "object",
+      "properties": {
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "Lowercased Google email address granted ADMIN role.",
+          "minLength": 3,
+          "maxLength": 120
+        },
+        "grantedByUid": {
+          "type": "string",
+          "description": "UID of the administrator who promoted this user.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when updated."
+        }
+      },
+      "required": ["email", "grantedByUid", "updatedAt"]
     }
   },
   "firestore": {
     "/staff/{staffId}": {
       "schema": { "$ref": "#/entities/StaffMember" },
-      "description": "Stores invited users and their assigned role (STAFF or ADMIN)."
+      "description": "Stores users (auto-registered as STAFF on Google sign-in or invited by Admin) and their assigned role (STAFF or ADMIN)."
+    },
+    "/admin_emails/{emailId}": {
+      "schema": { "$ref": "#/entities/AdminEmailGrant" },
+      "description": "Lookup records for manually promoted administrators."
     },
     "/students/{studentId}": {
       "schema": { "$ref": "#/entities/Student" },

@@ -12,19 +12,12 @@ export type NotificationType =
   | 'APPROACHING_DEADLINE'
   | 'ADMIN_REMINDER';
 
-export const OWNER_ADMIN_EMAILS = [
-  'j.alimajen_wis@gemswis.com',
-  'buxkillian@gmail.com',
-];
+export const OWNER_ADMIN_EMAILS = ['j.alimajen_wis@gemswis.com'];
 
 export function isOwnerAdminEmail(email?: string | null): boolean {
   if (!email) return false;
   const normalized = email.trim().toLowerCase();
-  return (
-    OWNER_ADMIN_EMAILS.includes(normalized) ||
-    normalized === 'j.alimajen_wis@gemswis.com' ||
-    normalized === 'buxkillian@gmail.com'
-  );
+  return normalized === 'j.alimajen_wis@gemswis.com';
 }
 
 export interface StaffMember {
@@ -38,14 +31,6 @@ export interface StaffMember {
   pin?: string;
   createdAt?: Timestamp;
   updatedAt?: Timestamp;
-}
-
-export function generateRandomStaffPin(): string {
-  return String(Math.floor(1000 + Math.random() * 9000));
-}
-
-export function isValidStaffPin(pin?: string | null): boolean {
-  return typeof pin === 'string' && /^\d{4}$/.test(pin.trim());
 }
 
 export interface Student {

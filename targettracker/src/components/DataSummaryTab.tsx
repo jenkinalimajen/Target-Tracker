@@ -79,40 +79,13 @@ function formatTargetColumnHeader(
 export function getRatingColorClasses(rating: TrackingRating | string): string {
   switch (rating) {
     case 'M':
-      return 'bg-purple-600 text-white border border-purple-700 shadow-2xs';
     case 'A':
-      return 'bg-emerald-600 text-white border border-emerald-700 shadow-2xs';
     case 'PA':
-      return 'bg-sky-500 text-white border border-sky-600 shadow-2xs';
     case 'WT':
-      return 'bg-amber-500 text-white border border-amber-600 shadow-2xs';
     case 'NA':
-      return 'bg-slate-500 text-white border border-slate-600 shadow-2xs';
+      return 'bg-transparent text-slate-900 border border-slate-400';
     default:
-      return 'bg-slate-200 text-slate-700 border border-slate-300';
-  }
-}
-
-/**
- * Returns exact RGB colors for crisp vector PDF rendering of rating badges
- */
-export function getRatingRgb(
-  rating: TrackingRating | string
-): [number, number, number] {
-  switch (rating) {
-    case 'M':
-      return [147, 51, 234]; // Purple #9333ea
-    case 'A':
-      return [22, 163, 74]; // Emerald green #16a34a
-    case 'PA':
-      return [14, 165, 233]; // Sky blue #0ea5e9
-    case 'WT':
-      return [217, 119, 6]; // Amber #d97706
-    case 'EXP':
-      return [99, 102, 241]; // Indigo #6366f1
-    case 'NA':
-    default:
-      return [100, 116, 139]; // Slate #64748b
+      return 'bg-transparent text-slate-700 border border-slate-300';
   }
 }
 
@@ -1253,8 +1226,6 @@ export const DataSummaryTab: React.FC<DataSummaryTabProps> = ({
                 plan.items.forEach((item: RenderItem) => {
                   if (lineY > maxY) return; // Strict boundary: will NEVER draw outside table border
 
-                  const rgb = getRatingRgb(item.ratingStr);
-
                   if (item.type === 'inline') {
                     // Draw subject text
                     pdf.setFont('helvetica', 'normal');
@@ -1268,18 +1239,13 @@ export const DataSummaryTab: React.FC<DataSummaryTabProps> = ({
                     const subW = pdf.getTextWidth(item.subText);
                     pdf.text(item.dashText, startX + subW, lineY);
 
-                    // Draw rating badge
+                    // Draw rating indicator (outline only, no fill color)
                     const dashW = pdf.getTextWidth(item.dashText);
                     const badgeX = startX + subW + dashW;
                     const badgeY = lineY - 2.6;
 
-                    pdf.setFillColor(rgb[0], rgb[1], rgb[2]);
-                    pdf.setDrawColor(
-                      Math.max(0, rgb[0] - 25),
-                      Math.max(0, rgb[1] - 25),
-                      Math.max(0, rgb[2] - 25)
-                    );
-                    pdf.setLineWidth(0.15);
+                    pdf.setDrawColor(100, 116, 139);
+                    pdf.setLineWidth(0.2);
                     pdf.roundedRect(
                       badgeX,
                       badgeY,
@@ -1287,10 +1253,10 @@ export const DataSummaryTab: React.FC<DataSummaryTabProps> = ({
                       item.badgeH,
                       0.6,
                       0.6,
-                      'FD'
+                      'D'
                     );
 
-                    pdf.setTextColor(255, 255, 255);
+                    pdf.setTextColor(15, 23, 42);
                     pdf.setFont('helvetica', 'bold');
                     pdf.setFontSize(6.5);
                     const textW = pdf.getTextWidth(item.ratingStr);
@@ -1314,18 +1280,13 @@ export const DataSummaryTab: React.FC<DataSummaryTabProps> = ({
                       }
                     });
 
-                    // Draw rating badge right below
+                    // Draw rating indicator right below (outline only, no fill color)
                     if (lineY <= maxY) {
                       const badgeX = startX;
                       const badgeY = lineY - 2.6;
 
-                      pdf.setFillColor(rgb[0], rgb[1], rgb[2]);
-                      pdf.setDrawColor(
-                        Math.max(0, rgb[0] - 25),
-                        Math.max(0, rgb[1] - 25),
-                        Math.max(0, rgb[2] - 25)
-                      );
-                      pdf.setLineWidth(0.15);
+                      pdf.setDrawColor(100, 116, 139);
+                      pdf.setLineWidth(0.2);
                       pdf.roundedRect(
                         badgeX,
                         badgeY,
@@ -1333,10 +1294,10 @@ export const DataSummaryTab: React.FC<DataSummaryTabProps> = ({
                         item.badgeH,
                         0.6,
                         0.6,
-                        'FD'
+                        'D'
                       );
 
-                      pdf.setTextColor(255, 255, 255);
+                      pdf.setTextColor(15, 23, 42);
                       pdf.setFont('helvetica', 'bold');
                       pdf.setFontSize(6.5);
                       const textW = pdf.getTextWidth(item.ratingStr);
