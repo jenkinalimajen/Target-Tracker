@@ -1,0 +1,332 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global Safety Net (Default-Deny Catch-All)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_-]+$');
+    }
+
+    function isValidEmailDocId(id) {
+      return id is string && id.size() >= 3 && id.size() <= 120 && id.matches('^[^/]+@[^/]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isAdmin() {
+      return isVerified() && (
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
+        request.auth.token.email == 'j.alimajen_wis@gemswis.com' ||
+        ('email' in request.auth.token &&
+          exists(/databases/$(database)/documents/admin_emails/$(request.auth.token.email)))
+      );
+    }
+
+    function isValidStaffMember(data) {
+      return data.keys().hasAll([
+          'adminUid', 'name', 'email', 'department', 'role', 'inviteStatus', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'adminUid', 'name', 'email', 'department', 'role', 'inviteStatus', 'pin', 'createdAt', 'updatedAt'
+        ]) &&
+        isValidId(data.adminUid) &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 100 &&
+        data.email is string && data.email.size() >= 3 && data.email.size() <= 120 &&
+        data.department is string && data.department.size() >= 1 && data.department.size() <= 80 &&
+        data.role is string && data.role.size() <= 20 &&
+        (data.role == 'STAFF' || data.role == 'ADMIN') &&
+        data.inviteStatus is string && data.inviteStatus.size() <= 20 &&
+        (data.inviteStatus == 'INVITED' || data.inviteStatus == 'ACTIVE') &&
+        (!('pin' in data) || (data.pin is string && data.pin.size() == 4 && data.pin.matches('^[0-9]{4}$'))) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidAdminEmailGrant(data, emailId) {
+      return data.keys().hasAll(['email', 'grantedByUid', 'updatedAt']) &&
+        data.keys().hasOnly(['email', 'grantedByUid', 'updatedAt']) &&
+        data.email is string && data.email.size() >= 3 && data.email.size() <= 120 &&
+        data.email == emailId &&
+        isValidId(data.grantedByUid) &&
+        data.grantedByUid == request.auth.uid &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidStudent(data) {
+      return data.keys().hasAll([
+          'adminUid', 'name', 'yearGroup', 'studentCode', 'subjects', 'assignedStaffEmails', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'adminUid', 'name', 'yearGroup', 'studentCode', 'subjects', 'assignedStaffEmails', 'mentorName', 'remarks', 'createdAt', 'updatedAt'
+        ]) &&
+        isValidId(data.adminUid) &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 100 &&
+        data.yearGroup is string && data.yearGroup.size() >= 1 && data.yearGroup.size() <= 40 &&
+        data.studentCode is string && data.studentCode.size() >= 1 && data.studentCode.size() <= 30 &&
+        (!('mentorName' in data) || (data.mentorName is string && data.mentorName.size() >= 1 && data.mentorName.size() <= 100)) &&
+        (!('remarks' in data) || (data.remarks is string && data.remarks.size() <= 2000)) &&
+        data.subjects is list && data.subjects.size() >= 1 && data.subjects.size() <= 10 &&
+        data.subjects[0] is string && data.subjects[0].size() >= 1 && data.subjects[0].size() <= 80 &&
+        data.assignedStaffEmails is list && data.assignedStaffEmails.size() <= 20 &&
+        (data.assignedStaffEmails.size() == 0 || (data.assignedStaffEmails[0] is string && data.assignedStaffEmails[0].size() >= 3 && data.assignedStaffEmails[0].size() <= 120)) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidTarget(data) {
+      return data.keys().hasAll([
+          'adminUid', 'studentId', 'studentName', 'subject', 'title', 'trackingRequired',
+          'assignedStaffEmail', 'assignedStaffName', 'subjectStaffEmail', 'currentWeekStatus',
+          'currentWeekKey', 'progressScore', 'weeklyHistorySummary', 'lastTrackedByEmail',
+          'deadlineDate', 'notes', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'adminUid', 'studentId', 'studentName', 'subject', 'targetGroupId', 'heading', 'title', 'challenge', 'suggestedStrategies', 'internalNote', 'fontColor', 'trackingRequired',
+          'assignedStaffEmail', 'assignedStaffName', 'subjectStaffEmail',
+          'teacherName', 'teacherEmail', 'lsaName', 'lsaEmail',
+          'term',
+          'currentWeekStatus', 'currentWeekKey', 'progressScore', 'weeklyHistorySummary',
+          'lastTrackedByEmail', 'deadlineDate', 'notes', 'createdAt', 'updatedAt'
+        ]) &&
+        isValidId(data.adminUid) &&
+        isValidId(data.studentId) &&
+        data.studentName is string && data.studentName.size() >= 1 && data.studentName.size() <= 100 &&
+        data.subject is string && data.subject.size() >= 1 && data.subject.size() <= 80 &&
+        (!('targetGroupId' in data) || (data.targetGroupId is string && data.targetGroupId.size() <= 100)) &&
+        (!('heading' in data) || (data.heading is string && data.heading.size() <= 100000)) &&
+        data.title is string && data.title.size() >= 1 && data.title.size() <= 100000 &&
+        (!('challenge' in data) || (data.challenge is string && data.challenge.size() <= 100000)) &&
+        (!('suggestedStrategies' in data) || (data.suggestedStrategies is string && data.suggestedStrategies.size() <= 100000)) &&
+        (!('internalNote' in data) || (data.internalNote is string && data.internalNote.size() <= 100000)) &&
+        (!('fontColor' in data) || (data.fontColor is string && (data.fontColor == 'black' || data.fontColor == 'red' || data.fontColor == 'blue'))) &&
+        data.trackingRequired is bool &&
+        data.assignedStaffEmail is string && data.assignedStaffEmail.size() >= 3 && data.assignedStaffEmail.size() <= 120 &&
+        data.assignedStaffName is string && data.assignedStaffName.size() >= 1 && data.assignedStaffName.size() <= 100 &&
+        data.subjectStaffEmail is string && data.subjectStaffEmail.size() >= 3 && data.subjectStaffEmail.size() <= 120 &&
+        (!('teacherName' in data) || (data.teacherName is string && data.teacherName.size() <= 100)) &&
+        (!('teacherEmail' in data) || (data.teacherEmail is string && data.teacherEmail.size() <= 120)) &&
+        (!('lsaName' in data) || (data.lsaName is string && data.lsaName.size() <= 100)) &&
+        (!('lsaEmail' in data) || (data.lsaEmail is string && data.lsaEmail.size() <= 120)) &&
+        (!('term' in data) || (data.term is string && data.term.size() >= 1 && data.term.size() <= 40)) &&
+        data.currentWeekStatus is string && data.currentWeekStatus.size() <= 20 &&
+        (data.currentWeekStatus == 'UNTRACKED' || data.currentWeekStatus == 'WT' || data.currentWeekStatus == 'PA' || data.currentWeekStatus == 'A' || data.currentWeekStatus == 'M' || data.currentWeekStatus == 'NA') &&
+        data.currentWeekKey is string && data.currentWeekKey.size() >= 1 && data.currentWeekKey.size() <= 20 &&
+        data.progressScore is int && data.progressScore >= 0 && data.progressScore <= 100 &&
+        data.weeklyHistorySummary is string && data.weeklyHistorySummary.size() <= 500 &&
+        data.lastTrackedByEmail is string && data.lastTrackedByEmail.size() >= 1 && data.lastTrackedByEmail.size() <= 120 &&
+        data.deadlineDate is string && data.deadlineDate.size() >= 1 && data.deadlineDate.size() <= 30 &&
+        data.notes is string && data.notes.size() <= 400 &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidNotificationItem(data) {
+      return data.keys().hasAll([
+          'adminUid', 'recipientEmail', 'recipientName', 'type', 'title', 'message',
+          'studentId', 'studentName', 'subject', 'dueDate', 'isRead', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'adminUid', 'recipientEmail', 'recipientName', 'type', 'title', 'message',
+          'studentId', 'studentName', 'subject', 'dueDate', 'isRead', 'createdAt', 'updatedAt'
+        ]) &&
+        isValidId(data.adminUid) &&
+        data.recipientEmail is string && data.recipientEmail.size() >= 3 && data.recipientEmail.size() <= 120 &&
+        data.recipientName is string && data.recipientName.size() >= 1 && data.recipientName.size() <= 100 &&
+        data.type is string && data.type.size() <= 30 &&
+        (data.type == 'INVITATION' || data.type == 'PENDING_ASSIGNMENT' || data.type == 'APPROACHING_DEADLINE' || data.type == 'ADMIN_REMINDER') &&
+        data.title is string && data.title.size() >= 1 && data.title.size() <= 140 &&
+        data.message is string && data.message.size() >= 1 && data.message.size() <= 400 &&
+        isValidId(data.studentId) &&
+        data.studentName is string && data.studentName.size() >= 1 && data.studentName.size() <= 100 &&
+        data.subject is string && data.subject.size() >= 1 && data.subject.size() <= 80 &&
+        data.dueDate is string && data.dueDate.size() >= 1 && data.dueDate.size() <= 30 &&
+        data.isRead is bool &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    match /admins/{adminId} {
+      allow get: if isVerified() && isValidId(adminId) && request.auth.uid == adminId;
+      allow list, create, update, delete: if false;
+    }
+
+    match /admin_emails/{emailId} {
+      allow get: if isVerified() && isValidEmailDocId(emailId) && (request.auth.token.email == emailId || isAdmin());
+      allow list: if isAdmin();
+      allow create, update: if isAdmin() && isValidEmailDocId(emailId) &&
+        isValidAdminEmailGrant(incoming(), emailId) &&
+        incoming().updatedAt == request.time;
+      allow delete: if isAdmin() && isValidEmailDocId(emailId);
+    }
+
+    match /staff/{staffId} {
+      allow get: if isVerified() && isValidId(staffId);
+      allow list: if isVerified();
+      allow create: if isVerified() && isValidId(staffId) && isValidStaffMember(incoming()) &&
+        (
+          isAdmin() ||
+          (
+            incoming().adminUid == request.auth.uid &&
+            incoming().role == 'STAFF' &&
+            incoming().inviteStatus == 'ACTIVE' &&
+            incoming().email == request.auth.token.email
+          )
+        ) &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isVerified() && isValidId(staffId) && isValidStaffMember(incoming()) &&
+        incoming().adminUid == existing().adminUid &&
+        incoming().updatedAt == request.time && (
+          (isAdmin() && (incoming().createdAt == existing().createdAt || incoming().createdAt == request.time)) ||
+          (incoming().createdAt == existing().createdAt && (
+            (existing().adminUid == request.auth.uid &&
+              existing().role == incoming().role &&
+              incoming().diff(existing()).affectedKeys().hasOnly(['name', 'email', 'department', 'inviteStatus', 'updatedAt'])
+            ) ||
+            (existing().role == incoming().role &&
+              incoming().email == existing().email &&
+              incoming().email == request.auth.token.email &&
+              incoming().inviteStatus == 'ACTIVE' &&
+              (!('pin' in incoming()) || ('pin' in existing() && incoming().pin == existing().pin)) &&
+              incoming().diff(existing()).affectedKeys().hasOnly(['inviteStatus', 'updatedAt'])
+            )
+          ))
+        );
+      allow delete: if isVerified() && isValidId(staffId) && (
+        existing().adminUid == request.auth.uid || isAdmin()
+      );
+    }
+
+    match /students/{studentId} {
+      allow get: if isVerified() && isValidId(studentId);
+      allow list: if isVerified();
+      allow create: if isVerified() && isValidId(studentId) && isValidStudent(incoming()) &&
+        (incoming().adminUid == request.auth.uid || isAdmin()) &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isVerified() && isValidId(studentId) && isValidStudent(incoming()) &&
+        incoming().adminUid == existing().adminUid &&
+        incoming().updatedAt == request.time && (
+          (isAdmin() && (incoming().createdAt == existing().createdAt || incoming().createdAt == request.time)) ||
+          (incoming().createdAt == existing().createdAt && (
+            (existing().adminUid == request.auth.uid &&
+              incoming().diff(existing()).affectedKeys().hasOnly([
+                'name', 'yearGroup', 'studentCode', 'subjects', 'assignedStaffEmails', 'mentorName', 'updatedAt'
+              ])
+            ) ||
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'name', 'yearGroup', 'mentorName', 'updatedAt'
+            ])
+          ))
+        );
+      allow delete: if isVerified() && isValidId(studentId) && (
+        existing().adminUid == request.auth.uid || isAdmin()
+      );
+    }
+
+    match /targets/{targetId} {
+      allow get: if isVerified() && isValidId(targetId);
+      allow list: if isVerified();
+      allow create: if isVerified() && isValidId(targetId) && isValidTarget(incoming()) &&
+        (incoming().adminUid == request.auth.uid || isAdmin()) &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        exists(/databases/$(database)/documents/students/$(incoming().studentId)) &&
+        (get(/databases/$(database)/documents/students/$(incoming().studentId)).data.adminUid == request.auth.uid || isAdmin());
+      allow update: if isVerified() && isValidId(targetId) && isValidTarget(incoming()) &&
+        incoming().adminUid == existing().adminUid &&
+        incoming().studentId == existing().studentId &&
+        incoming().updatedAt == request.time && (
+          (isAdmin() && (incoming().createdAt == existing().createdAt || incoming().createdAt == request.time)) ||
+          (incoming().createdAt == existing().createdAt && (
+            (existing().adminUid == request.auth.uid &&
+              incoming().diff(existing()).affectedKeys().hasOnly([
+                'studentName', 'subject', 'targetGroupId', 'heading', 'title', 'challenge', 'suggestedStrategies', 'internalNote', 'fontColor', 'trackingRequired',
+                'assignedStaffEmail', 'assignedStaffName', 'subjectStaffEmail',
+                'teacherName', 'teacherEmail', 'lsaName', 'lsaEmail',
+                'term',
+                'currentWeekStatus', 'currentWeekKey', 'progressScore',
+                'weeklyHistorySummary', 'lastTrackedByEmail', 'deadlineDate',
+                'notes', 'updatedAt'
+              ])
+            ) ||
+            (incoming().trackingRequired == existing().trackingRequired &&
+              incoming().diff(existing()).affectedKeys().hasOnly([
+                'currentWeekStatus', 'currentWeekKey', 'progressScore',
+                'weeklyHistorySummary', 'lastTrackedByEmail', 'internalNote', 'notes', 'updatedAt'
+              ])
+            ) ||
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'studentName', 'updatedAt'
+            ])
+          ))
+        );
+      allow delete: if isVerified() && isValidId(targetId) && (
+        existing().adminUid == request.auth.uid || isAdmin()
+      );
+    }
+
+    match /notifications/{notificationId} {
+      allow get: if isVerified() && isValidId(notificationId);
+      allow list: if isVerified();
+      allow create: if isVerified() && isValidId(notificationId) && isValidNotificationItem(incoming()) &&
+        (incoming().adminUid == request.auth.uid || isAdmin()) &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isVerified() && isValidId(notificationId) && isValidNotificationItem(incoming()) &&
+        incoming().adminUid == existing().adminUid &&
+        incoming().updatedAt == request.time && (
+          (isAdmin() && (incoming().createdAt == existing().createdAt || incoming().createdAt == request.time)) ||
+          (incoming().createdAt == existing().createdAt && (
+            (existing().adminUid == request.auth.uid &&
+              incoming().diff(existing()).affectedKeys().hasOnly(['isRead', 'title', 'message', 'dueDate', 'updatedAt'])
+            ) ||
+            (incoming().recipientEmail == existing().recipientEmail &&
+              incoming().diff(existing()).affectedKeys().hasOnly(['isRead', 'updatedAt'])
+            )
+          ))
+        );
+      allow delete: if isVerified() && isValidId(notificationId) && (
+        existing().recipientEmail == request.auth.token.email ||
+        existing().adminUid == request.auth.uid ||
+        isAdmin()
+      );
+    }
+
+    match /archives/{archiveId} {
+      allow get: if isVerified() && isValidId(archiveId);
+      allow list: if isVerified();
+      allow create: if isVerified() && isValidId(archiveId) &&
+        (incoming().adminUid == request.auth.uid || isAdmin());
+      allow update: if isVerified() && isValidId(archiveId) &&
+        (existing().adminUid == request.auth.uid || isAdmin());
+      allow delete: if isVerified() && isValidId(archiveId) &&
+        (existing().adminUid == request.auth.uid || isAdmin());
+    }
+
+    match /settings/{settingId} {
+      allow get: if isVerified() && isValidId(settingId);
+      allow list: if isVerified();
+      allow create, update: if isAdmin() && isValidId(settingId);
+      allow delete: if isAdmin() && isValidId(settingId);
+    }
+  }
+}

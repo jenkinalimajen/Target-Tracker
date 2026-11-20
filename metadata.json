@@ -1,0 +1,8 @@
+{
+  "name": "Remix TargetTrack Academic Progress Matrix",
+  "description": "Weekly student target tracking platform with subject-assigned staff dashboards, real-time progress bars, email invitations, deadline notifications, and administrator oversight.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
