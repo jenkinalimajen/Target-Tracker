@@ -2,7 +2,6 @@ import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
   Calendar,
   Search,
-  Copy,
   Check,
   BookOpen,
   Save,
@@ -242,10 +241,6 @@ export const DataSummaryTab: React.FC<DataSummaryTabProps> = ({
     2,
     3,
   ]);
-
-  // UI helpers for copy confirmation
-  const [copiedStudentId, setCopiedStudentId] = useState<string | null>(null);
-  const [copiedAll, setCopiedAll] = useState(false);
 
   // PDF Export State & Ref
   const [isExportingPDF, setIsExportingPDF] = useState(false);
@@ -771,176 +766,6 @@ export const DataSummaryTab: React.FC<DataSummaryTabProps> = ({
       };
     });
   }, [filteredStudents, targets, termWeeksToCurrent, effectiveDisplayTerm]);
-
-  // Formats a single student's summary as clean plain text
-  const generateStudentTextSummary = (
-    summary: (typeof studentSummaries)[0]
-  ) => {
-    const { student, targetGroups } = summary;
-    const lines: string[] = [];
-
-    lines.push(`[${student.name} ${student.yearGroup || 'Year 10'}]`);
-    lines.push(`Week: ${weekRangeCellText}`);
-    lines.push('');
-
-    if (targetGroups.length === 0) {
-      lines.push('No targets currently configured for this student.');
-    } else {
-      targetGroups.forEach((grp) => {
-        if (grp.items.length > 1) {
-          lines.push(
-            grp.sharedHeading
-              ? `Target ${grp.groupNumber}: ${grp.sharedHeading}`
-              : `Target ${grp.groupNumber}`
-          );
-          grp.items.forEach((item) => {
-            lines.push(
-              `  ${item.displayNumber} ${item.title}${
-                item.challenge ? ` (Challenge: ${item.challenge})` : ''
-              }:`
-            );
-            item.groups.forEach((g) => {
-              lines.push(`    ${g.subjectsFormatted}: ${g.rating}`);
-            });
-          });
-          lines.push('');
-        } else if (grp.items[0]) {
-          const item = grp.items[0];
-          const colHeader = formatTargetColumnHeader(
-            item.targetNumber,
-            item.title,
-            item.heading,
-            item.challenge,
-            false
-          );
-          lines.push(`${colHeader}:`);
-          item.groups.forEach((g) => {
-            lines.push(`  ${g.subjectsFormatted}: ${g.rating}`);
-          });
-          lines.push('');
-        }
-      });
-    }
-
-    return lines.join('\n');
-  };
-
-  const handleCopySingleStudent = async (
-    summary: (typeof studentSummaries)[0]
-  ) => {
-    const text = generateStudentTextSummary(summary);
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopiedStudentId(summary.student.id);
-      setTimeout(() => {
-        setCopiedStudentId((prev) =>
-          prev === summary.student.id ? null : prev
-        );
-      }, 2500);
-    } catch {
-      // Fallback
-    }
-  };
-
-  const generateStudentWeeklyTextSummary = (
-    stuWeekly: (typeof studentWeeklyBySubjectSummaries)[0]
-  ) => {
-    const { student, subjects, targetRows } = stuWeekly;
-    const lines: string[] = [];
-    lines.push(`[${student.name} ${student.yearGroup || 'Year 10'}]`);
-    lines.push(`Term: ${effectiveDisplayTerm} (Week 1 – Week ${currentWeekNumber})`);
-    lines.push('');
-
-    if (targetRows.length === 0 || subjects.length === 0) {
-      lines.push('No tracked targets found for this term.');
-    } else {
-      targetRows.forEach((row) => {
-        const headingStr = row.targetTitle
-          ? `${row.targetNumberLabel}: ${row.targetTitle}`
-          : row.targetNumberLabel;
-        lines.push(headingStr);
-        lines.push(`  Description: ${row.description}`);
-        if (row.challenge) {
-          lines.push(`  Challenge: ${row.challenge}`);
-        }
-        subjects.forEach((subj) => {
-          const cell = row.bySubject[subj.subject];
-          const subjLabel = subj.teacherName
-            ? `${subj.subject} (Teacher: ${subj.teacherName})`
-            : subj.subject;
-          if (!cell || !cell.applicable) {
-            lines.push(`  ${subjLabel}: Not Applicable`);
-          } else {
-            const weekPairs = cell.weeklyRatings
-              .map(
-                (w) =>
-                  `Wk${w.weekNumber}: ${
-                    w.rating === 'UNTRACKED' ? '—' : w.rating
-                  }`
-              )
-              .join(' | ');
-            lines.push(`  ${subjLabel}: ${weekPairs}`);
-          }
-        });
-        lines.push('');
-      });
-    }
-    return lines.join('\n');
-  };
-
-  const handleCopySingleStudentWeekly = async (
-    stuWeekly: (typeof studentWeeklyBySubjectSummaries)[0]
-  ) => {
-    const text = generateStudentWeeklyTextSummary(stuWeekly);
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopiedStudentId(stuWeekly.student.id);
-      setTimeout(() => {
-        setCopiedStudentId((prev) =>
-          prev === stuWeekly.student.id ? null : prev
-        );
-      }, 2500);
-    } catch {
-      // Fallback
-    }
-  };
-
-  const handleCopyAllSummaries = async () => {
-    const divider = '\n' + '='.repeat(50) + '\n\n';
-    const cohortText =
-      selectedTier === 'ALL'
-        ? 'All Students'
-        : selectedTier === 'MIDDLE'
-        ? 'Middle School (Year 7–8)'
-        : 'Upper School (Year 9–13)';
-
-    const allText =
-      summaryViewMode === 'WEEKLY_BY_SUBJECT'
-        ? `ACADEMIC TARGET TRACKING · INDIVIDUAL REPORT BY SUBJECT · ${effectiveDisplayTerm}\nWeeks: Week 1 – Week ${currentWeekNumber}\nCohort Filter: ${cohortText}\nTotal Students: ${studentWeeklyBySubjectSummaries.length}\n\n` +
-          studentWeeklyBySubjectSummaries
-            .map(generateStudentWeeklyTextSummary)
-            .join(divider) +
-          '\n\n' +
-          '='.repeat(50) +
-          '\n' +
-          `OVERALL REMARKS:\n${overallRemarks.trim() || 'No overall remarks recorded.'}\n`
-        : `ACADEMIC TARGET TRACKING DATA SUMMARY · ${effectiveDisplayTerm}\nDate Range: ${activeDateRangeLabel} (Week ${weekRangeCellText})\n` +
-          `Cohort Filter: ${cohortText}\n` +
-          `Total Students: ${studentSummaries.length}\n\n` +
-          studentSummaries.map(generateStudentTextSummary).join(divider) +
-          '\n\n' +
-          '='.repeat(50) +
-          '\n' +
-          `OVERALL REMARKS:\n${overallRemarks.trim() || 'No overall remarks recorded.'}\n`;
-
-    try {
-      await navigator.clipboard.writeText(allText);
-      setCopiedAll(true);
-      setTimeout(() => setCopiedAll(false), 2500);
-    } catch {
-      // Fallback
-    }
-  };
 
   // Export to CSV matching the active summary view
   const handleExportCSV = () => {
@@ -2122,31 +1947,6 @@ export const DataSummaryTab: React.FC<DataSummaryTabProps> = ({
           <div className="flex items-center gap-2 flex-wrap shrink-0">
             <button
               type="button"
-              onClick={handleCopyAllSummaries}
-              className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors shadow-2xs ${
-                isDark
-                  ? 'bg-slate-800 text-slate-200 border border-slate-700 hover:bg-slate-700'
-                  : 'text-slate-700 bg-white border border-slate-300 hover:bg-slate-50'
-              }`}
-              title="Copy formatted summary of all filtered students to clipboard"
-            >
-              {copiedAll ? (
-                <>
-                  <Check className="w-3.5 h-3.5 text-emerald-500" />
-                  <span className="text-emerald-400 font-bold">
-                    Copied All!
-                  </span>
-                </>
-              ) : (
-                <>
-                  <Copy className="w-3.5 h-3.5 text-slate-400" />
-                  <span>Copy Text</span>
-                </>
-              )}
-            </button>
-
-            <button
-              type="button"
               onClick={handleExportCSV}
               className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors shadow-2xs ${
                 isDark
@@ -2597,7 +2397,6 @@ export const DataSummaryTab: React.FC<DataSummaryTabProps> = ({
             <div className="space-y-8">
               {studentWeeklyBySubjectSummaries.map((stuWeekly) => {
                 const { student, subjects, targetRows } = stuWeekly;
-                const isCopied = copiedStudentId === student.id;
 
                 return (
                   <div
@@ -2607,29 +2406,6 @@ export const DataSummaryTab: React.FC<DataSummaryTabProps> = ({
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                       <div className="inline-block bg-yellow-300 text-slate-900 border border-slate-900 font-bold px-3.5 py-1.5 text-sm sm:text-base shadow-2xs">
                         {student.name} {student.yearGroup || 'Year 10'}
-                      </div>
-
-                      <div className="flex items-center gap-2 no-print">
-                        <button
-                          type="button"
-                          onClick={() => handleCopySingleStudentWeekly(stuWeekly)}
-                          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 bg-white border border-slate-300 rounded hover:bg-slate-50 transition-colors shadow-2xs"
-                          title="Copy individual results text to clipboard"
-                        >
-                          {isCopied ? (
-                            <>
-                              <Check className="w-3.5 h-3.5 text-emerald-600" />
-                              <span className="text-emerald-700 font-bold">
-                                Copied!
-                              </span>
-                            </>
-                          ) : (
-                            <>
-                              <Copy className="w-3.5 h-3.5 text-slate-400" />
-                              <span>Copy Table</span>
-                            </>
-                          )}
-                        </button>
                       </div>
                     </div>
 
@@ -2765,40 +2541,16 @@ export const DataSummaryTab: React.FC<DataSummaryTabProps> = ({
           <div className="space-y-8">
             {studentSummaries.map((summary) => {
               const { student, targetList } = summary;
-              const isCopied = copiedStudentId === student.id;
 
               return (
                 <div
                   key={student.id}
                   className="print-student-card bg-white border border-slate-300 rounded-lg p-5 shadow-xs space-y-3"
                 >
-                  {/* Header row: Yellow student name box (matching the photo) + copy action */}
+                  {/* Header row: Yellow student name box (matching the photo) */}
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                     <div className="inline-block bg-yellow-300 text-slate-900 border border-slate-900 font-bold px-3.5 py-1.5 text-sm sm:text-base shadow-2xs">
                       {student.name} {student.yearGroup || 'Year 10'}
-                    </div>
-
-                    <div className="flex items-center gap-2 no-print">
-                      <button
-                        type="button"
-                        onClick={() => handleCopySingleStudent(summary)}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 bg-white border border-slate-300 rounded hover:bg-slate-50 transition-colors shadow-2xs"
-                        title="Copy summary table text to clipboard"
-                      >
-                        {isCopied ? (
-                          <>
-                            <Check className="w-3.5 h-3.5 text-emerald-600" />
-                            <span className="text-emerald-700 font-bold">
-                              Copied!
-                            </span>
-                          </>
-                        ) : (
-                          <>
-                            <Copy className="w-3.5 h-3.5 text-slate-400" />
-                            <span>Copy Table</span>
-                          </>
-                        )}
-                      </button>
                     </div>
                   </div>
 

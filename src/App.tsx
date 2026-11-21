@@ -298,7 +298,7 @@ export default function App() {
     if (!currentUser.emailVerified) {
       setIsCheckingAccess(false);
       setIsAccessAuthorized(false);
-      setAuthError('A verified Google account email is required to sign in.');
+      setAuthError('Sign-in restricted. Please use an authorized account.');
       signOut(auth).catch(() => {});
       return;
     }
@@ -336,7 +336,7 @@ export default function App() {
               if (!liveSnap.metadata.fromCache && !liveSnap.exists()) {
                 setIsAccessAuthorized(false);
                 setAuthError(
-                  `Access for "${userEmail}" was removed by the administrator.`
+                  'Sign-in restricted. Access is no longer active for this account.'
                 );
                 signOut(auth).catch(() => {});
               }
@@ -352,7 +352,7 @@ export default function App() {
       setIsAccessAuthorized(false);
       setIsCheckingAccess(false);
       setAuthError(
-        `Access restricted. "${userEmail}" is not a @gemswis.com account and has not been added by the administrator.`
+        'Sign-in restricted. You do not have permission to access this application.'
       );
       signOut(auth).catch(() => {});
     })();
@@ -903,7 +903,7 @@ export default function App() {
                   TargetTrack Sign-In
                 </h1>
                 <p className="text-xs text-slate-500">
-                  Sign in with your <span className="font-semibold text-slate-700">@gemswis.com</span> Google account or an email added by the administrator.
+                  Sign in with an authorized Google account to access your dashboard.
                 </p>
               </div>
 
