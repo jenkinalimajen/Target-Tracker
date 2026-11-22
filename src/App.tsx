@@ -788,7 +788,7 @@ export default function App() {
         <header className="flex flex-wrap items-center justify-between gap-4 px-6 py-3.5 bg-white border-b border-slate-200 text-slate-900">
           <div className="flex items-center gap-3">
             <span className="text-base font-black tracking-tight whitespace-nowrap shrink-0 text-slate-900">
-              TargetTrack
+              WIS Target Tracker
             </span>
           </div>
 
@@ -900,7 +900,7 @@ export default function App() {
             <div className="max-w-md mx-auto bg-white border border-slate-200 rounded-lg p-6 mt-10 space-y-5 shadow-xs">
               <div className="space-y-1">
                 <h1 className="text-lg font-bold text-slate-900">
-                  WIS Target Tracker Sign-In
+                  TargetTrack Sign-In
                 </h1>
                 <p className="text-xs text-slate-500">
                   Sign in with an authorized Google account to access your dashboard.
