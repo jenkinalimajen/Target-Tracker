@@ -900,7 +900,7 @@ export default function App() {
             <div className="max-w-md mx-auto bg-white border border-slate-200 rounded-lg p-6 mt-10 space-y-5 shadow-xs">
               <div className="space-y-1">
                 <h1 className="text-lg font-bold text-slate-900">
-                  TargetTrack Sign-In
+                  WIS Target Tracker Sign-In
                 </h1>
                 <p className="text-xs text-slate-500">
                   Sign in with an authorized Google account to access your dashboard.
