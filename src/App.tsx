@@ -897,42 +897,52 @@ export default function App() {
                 : 'Checking browser login session...'}
             </div>
           ) : !hasActiveSession ? (
-            <div className="max-w-md mx-auto bg-white border border-slate-200 rounded-lg p-6 mt-10 space-y-5 shadow-xs">
-              <div className="space-y-1">
-                <h1 className="text-lg font-bold text-slate-900">
-                  TargetTrack Sign-In
-                </h1>
-                <p className="text-xs text-slate-500">
-                  Sign in with an authorized Google account to access your dashboard.
-                </p>
+            <div className="max-w-md mx-auto mt-8 flex flex-col items-center space-y-6">
+              <div className="w-28 h-28 sm:w-32 sm:h-32 rounded-[26px] overflow-hidden shadow-md border border-slate-200/80 bg-white shrink-0">
+                <img
+                  src="/assets/aistudio/favicon_1d424a08.png"
+                  alt="WIS Target Tracker logo"
+                  className="w-full h-full object-cover"
+                />
               </div>
 
-              {urlStaffEmail && (
-                <div className="p-2.5 rounded-md bg-emerald-50 border border-emerald-200 text-xs text-emerald-900 flex items-center justify-between gap-2">
-                  <span>
-                    Direct link for{' '}
-                    <strong className="font-mono">{urlStaffEmail}</strong>
-                  </span>
+              <div className="w-full bg-white border border-slate-200 rounded-lg p-6 space-y-5 shadow-xs">
+                <div className="space-y-1 text-center">
+                  <h1 className="text-lg font-bold text-slate-900">
+                    WIS Target Tracker Sign-In
+                  </h1>
+                  <p className="text-xs text-slate-500">
+                    Sign in with an authorized Google account to access your dashboard.
+                  </p>
                 </div>
-              )}
 
-              {authError && (
-                <div className="p-2.5 bg-red-50 border border-red-200 rounded text-xs text-red-700">
-                  {authError}
-                </div>
-              )}
+                {urlStaffEmail && (
+                  <div className="p-2.5 rounded-md bg-emerald-50 border border-emerald-200 text-xs text-emerald-900 flex items-center justify-between gap-2">
+                    <span>
+                      Direct link for{' '}
+                      <strong className="font-mono">{urlStaffEmail}</strong>
+                    </span>
+                  </div>
+                )}
 
-              <button
-                type="button"
-                onClick={handleGoogleSignIn}
-                disabled={isSigningIn}
-                className="w-full py-2.5 px-4 bg-slate-900 hover:bg-slate-800 disabled:opacity-60 text-white text-xs font-bold rounded-md transition-colors flex items-center justify-center gap-2"
-              >
-                <LogIn className="w-3.5 h-3.5" />
-                {isSigningIn
-                  ? 'Connecting to Google...'
-                  : 'Sign in with Google'}
-              </button>
+                {authError && (
+                  <div className="p-2.5 bg-red-50 border border-red-200 rounded text-xs text-red-700">
+                    {authError}
+                  </div>
+                )}
+
+                <button
+                  type="button"
+                  onClick={handleGoogleSignIn}
+                  disabled={isSigningIn}
+                  className="w-full py-2.5 px-4 bg-slate-900 hover:bg-slate-800 disabled:opacity-60 text-white text-xs font-bold rounded-md transition-colors flex items-center justify-center gap-2"
+                >
+                  <LogIn className="w-3.5 h-3.5" />
+                  {isSigningIn
+                    ? 'Connecting to Google...'
+                    : 'Sign in with Google'}
+                </button>
+              </div>
             </div>
           ) : isLoadingData || !hasLoadedStaff ? (
             <div className="text-center py-12 text-xs text-slate-500">
